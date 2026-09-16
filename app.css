@@ -1,0 +1,211 @@
+/* Carried over from the sibling Apps Script app's Index.html <style> block —
+   the two front ends run side by side and must not look like different
+   apps. Only the pieces this stage uses are copied: the palette, the body
+   and wrap shell, the topbar, form fields, the submit button, hints, and the
+   .txn row styling the pending-entry list (a later task) will reuse. Bills,
+   the account rail, the log and desktop mode are not here — this stage has
+   none of them. */
+
+:root {
+  /* Seamless: the page and its panels are the same white, and hairlines do
+     all the dividing. --well is the one step off that ground, for the inset
+     a form field needs to look like something you type into. */
+  --bg:       #ffffff;
+  --surface:  #ffffff;
+  --well:     #f1f2f5;
+  --ink:      #14161a;
+  --muted:    #6b7078;
+  --hairline: #e8e9ed;
+  --in:       #1f8a5b;
+  --out:      #b3352a;
+
+  --acct-account-1: #2563c9;
+  --acct-account-2: #6d4ac4;
+  --acct-vault:     #1f8a5b;
+  --acct-seabank:   #b4711a;
+  --acct-neutral:      #5a6068;
+  --acct-digital-bank: var(--acct-neutral);
+  --acct-venices:      var(--acct-neutral);
+
+  --acct: var(--acct-account-1);
+
+  --sans: "DM Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --display: "Jost", "DM Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  --pad: 16px;
+  --radius: 22px;      /* cards and the account pills */
+  --radius-sm: 12px;   /* form fields */
+  --track: 0.16em;     /* tracking on every small-caps label */
+
+  /* The page commits to one visual world — see spec §7. Without this the OS
+     dark setting still repaints the native date picker and the selects dark
+     against a white form, which is the one thing a light-only page otherwise
+     gets wrong. The meta tag says the same thing to the UA before the CSS
+     parses; both are one line. */
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 400 15px/1.5 var(--sans);
+  -webkit-text-size-adjust: 100%;
+}
+
+.wrap { max-width: 480px; margin: 0 auto; }
+
+/* Figures are no longer monospace — the reference has no monospace anywhere.
+   tabular-nums buys the same fixed-width digits, so the amount column still
+   lines up, without the typewriter texture. (Supersedes spec §7's "monospace
+   for all figures"; the requirement it served, tabular alignment, is kept.) */
+.fig {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* ── header ─────────────────────────────────────────── */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  padding: 16px var(--pad);
+  border-bottom: 0.5px solid var(--hairline);
+}
+/* The masthead is the one place spec §7's sentence-case rule is broken on
+   purpose: spaced small caps is what makes a wordmark read as a wordmark.
+   Every other string on the page stays sentence case. */
+.topbar h1 {
+  margin: 0;
+  font: 500 11px/1 var(--display);
+  text-transform: uppercase;
+  letter-spacing: var(--track);
+}
+.whoami { color: var(--muted); font-size: 12px; }
+
+/* ── entry form ─────────────────────────────────────── */
+
+.field { margin-bottom: 12px; }
+.field label {
+  display: block;
+  margin-bottom: 6px;
+  font: 400 11px var(--display);
+  text-transform: uppercase;
+  letter-spacing: var(--track);
+  color: var(--muted);
+}
+/* Fields are a fill, not a box: --well is the one tone off the page white, so
+   it reads as something you type into without needing a border. */
+.field input,
+.field select {
+  width: 100%;
+  min-height: 46px;
+  padding: 10px 14px;
+  font: 400 15px var(--sans);
+  color: var(--ink);
+  background: var(--well);
+  border: none;
+  border-radius: var(--radius-sm);
+  appearance: none;
+}
+/* The font shorthand above resets font-variant, so .fig's tnum has to be
+   re-applied at a specificity that beats it. */
+.field input.fig { font-variant-numeric: tabular-nums; }
+.field select {
+  /* native caret, drawn rather than shipped as an asset */
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+                    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: calc(100% - 18px) 21px, calc(100% - 13px) 21px;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  padding-right: 34px;
+}
+
+/* the one loud element: full-width, inverted, still not a FAB */
+.submit {
+  width: 100%;
+  min-height: 52px;
+  margin-top: 8px;
+  font: 500 15px var(--sans);
+  letter-spacing: 0.02em;
+  color: var(--bg);
+  background: var(--ink);
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.submit:disabled { opacity: 0.4; cursor: default; }
+
+.hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.hint[data-state="error"] { color: var(--out); }
+
+/* ── recent (the pending queue reuses this row styling) ────── */
+
+.txn {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  padding: 14px var(--pad);
+  border-top: 0.5px solid var(--hairline);
+  background: var(--surface);
+}
+.txn:last-child { border-bottom: 0.5px solid var(--hairline); }
+.txn[data-type="Deposit"]    .txn-amount { color: var(--in); }
+.txn[data-type="Withdrawal"] .txn-amount { color: var(--out); }
+/* Both stacks are flex columns so title-over-meta and amount-over-balance each
+   get a real line of their own. As inline spans the two halves of each stack
+   ran together on one line, and .txn-title's ellipsis never fired — that only
+   works on a block box. The gap is the space between the two lines; line-height
+   handles the space within one. */
+.txn-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.txn-title {
+  font-size: 15px;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.txn-meta { font-size: 12px; line-height: 1.3; color: var(--muted); }
+.txn-right {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+.txn-amount { font-size: 15px; line-height: 1.3; }
+.txn-balance { font-size: 12px; line-height: 1.3; color: var(--muted); }
+
+.txn.is-new { animation: land 900ms ease-out; }
+@keyframes land { from { background: color-mix(in srgb, var(--acct) 14%, var(--surface)); } }
+
+/* The row whose entry is open in the form, so it is obvious which one you
+   are about to change. */
+.txn.is-editing { background: var(--well); }
+.txn[tabindex] { cursor: pointer; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+
+/* ── new this stage: connection state and the pending queue ── */
+
+.conn { font-size: 11px; color: var(--muted); }
+.conn[data-state="offline"] { color: var(--out); }
+.pending { opacity: 0.65; }
+.pending-mark { font-size: 11px; color: var(--muted); }

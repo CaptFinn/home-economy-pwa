@@ -162,6 +162,17 @@ A verified token is cached in `CacheService` under a hash of itself until it
 expires, so the round trip happens about once an hour per device, not once per
 tap. A token that fails any check produces `kind: "auth"`.
 
+**Before spending that network call**, the token is decoded locally and
+discarded unless its `aud`, `iss`, `exp` and `email` already look right. The
+decode proves nothing — the payload is unsigned and a forger can write
+anything in it — so step 1 still runs for everything that passes. Its purpose
+is that a junk request costs no quota. A per-minute cap in `CacheService`
+backs it up, answering `kind: "server"` when the endpoint is being hammered.
+
+This matters because the endpoint's address is public (§8): anyone who opens
+the site can read it out of the network tab, as with every client-side app.
+Junk requests are therefore expected, and must be cheap.
+
 The client never sends an email address as a claim about who it is. The email
 is read out of the verified token, server side.
 
@@ -281,10 +292,18 @@ computed from a schedule the client does not own.
 
 ## 8. Security notes
 
-- The OAuth client id and the API URL live in a config file in this repo; the
-  client id is public by design. The **script id, the sheet id, the allow-list
+- The OAuth client id and the API URL live in a config file in this repo,
+  which is public: GitHub Pages serves it, and the browser must know the
+  endpoint to call it, so a private repo would hide the source history and not
+  the address. That is accepted. The **script id, the sheet id, the allow-list
   and the `PAYERS` property never appear here** — they stay in the Apps Script
   project and its Script Properties.
+- **The allow-list is the gate, not the URL.** A stranger who opens the site
+  gets an empty shell and a sign-in button; signing in with their own Google
+  account produces a genuine token whose email is not on the list, and the
+  server refuses it. No request they can construct reaches the books.
+- What the public address does expose is **abuse**, not access — hence the
+  local pre-check and the rate cap in §4.1.
 - The token is stored in memory and in IndexedDB on the device. It expires in
   about an hour; a stolen device is a bigger problem than a stolen token.
 - The server validates every argument again. The client's validation exists to

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<meta name="theme-color" content="#ffffff">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<!-- Same pair the sibling Apps Script app loads (Home_Economy_PWA/home-economy-app/src/Index.html):
+     Jost for the display face, DM Sans for everything small, real tabular
+     figures included. Offline, before the service worker has ever cached
+     these (they're cross-origin, so it never will), the page just falls
+     back to the system stack app.css already names — acceptable; self-hosting
+     the font files is the fix if that ever matters more than it does now. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500&family=Jost:wght@300;400;500&display=swap">
+<link rel="stylesheet" href="app.css">
+<title>Home economy</title>
+
+<div class="wrap">
+  <div class="topbar">
+    <h1>Home economy</h1>
+    <span class="conn" id="conn"></span>
+    <span class="whoami" id="whoami"></span>
+  </div>
+  <main id="screen"></main>
+  <footer id="foot"></footer>
+</div>
+
+<script src="https://accounts.google.com/gsi/client" async></script>
+<script type="module" src="app/main.js"></script>

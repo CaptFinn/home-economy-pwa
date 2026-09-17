@@ -36,6 +36,10 @@ self.addEventListener('fetch', (event) => {
   event.respondWith((async () => {
     const API_URL = await apiUrl;
     // Bypass entirely — no cache read, no cache write — see the file header.
+    // ponytail: defensive only, for now — every current call to API_URL is
+    // a POST, which the early return above already lets straight through.
+    // Kept so a future GET (e.g. a health check) can't quietly start being
+    // answered from a stale cache the day one is added.
     if (req.url.startsWith(API_URL)) return fetch(req);
 
     if (req.mode === 'navigate') {

@@ -63,23 +63,19 @@ async function onSubmit(event) {
   const problem = validateEntry(entry);
   if (problem) { hint(problem); return; }
 
-  // entryFrom() reports an unsigned amount + a separate `direction` — that's
-  // the shape the test in selfcheck.js requires, and it's what addEntry's
-  // own signAmount_ expects (it takes Math.abs() before reapplying the sign,
-  // so a pre-signed amount would work there too). But queue.js's pendingFor
-  // — the one client-side money sum this app is allowed to do — was built
-  // against queued items whose amount is already signed, with no direction
-  // field at all (see its own selfcheck.js fixtures). Folding the direction
-  // into the sign here, only for what gets queued, keeps both contracts:
-  // entryFrom stays exactly what the test wants, and the pending-balance
-  // estimate comes out with the right sign.
-  const queued = { ...entry, amount: entry.direction === 'out' ? -entry.amount : entry.amount };
-
+  // entry goes to the queue exactly as entryFrom built it — unsigned amount
+  // plus `direction` — because that is the wire shape addEntry expects.
+  // Ledger.gs's appendEntry_ runs validateEntry_ (rejects amount <= 0)
+  // BEFORE entryRow_ signs it; a pre-signed negative amount fails that
+  // check every time and gets parked forever, silently refusing every
+  // withdrawal. (ui.js's pendingBalance reconciles queue.js's pendingFor,
+  // which wants a signed amount, on the display side instead — nothing
+  // that reaches here or the wire is ever signed.)
   submitting = true;
   const submit = event.target.querySelector('.submit');
   if (submit) submit.disabled = true;
   try {
-    await enqueue(store, 'addEntry', { entry: queued });
+    await enqueue(store, 'addEntry', { entry });
   } finally {
     submitting = false;
     if (submit) submit.disabled = false;
@@ -102,6 +98,21 @@ function onScreenClick(event) {
   });
 }
 
+/** A tap on the connection line. When the server has rejected the token
+    (connLabel's 'sign in again'), that's the sign-in affordance itself —
+    tapping re-runs signIn() rather than a sync that would just fail the
+    same way again; otherwise a tap is just a manual sync trigger. */
+async function onConnClick() {
+  if (conn.needsAuth) {
+    await signIn();
+    conn.needsAuth = false;
+    view = await getView('bootstrap');
+    queue = await store.listQueue();
+    render();
+  }
+  if (navigator.onLine) sync();
+}
+
 // Guards sync() against overlap: two runs racing would drain the same queue
 // twice and could double-send an item mid-flight before the first run
 // removes it.
@@ -117,6 +128,7 @@ export async function sync() {
   if (syncing) return;
   syncing = true;
   conn.syncing = true;
+  conn.needsAuth = false; // each run starts by assuming the token is still good
   renderConn(conn);
 
   try {
@@ -128,8 +140,19 @@ export async function sync() {
     const auth = (await refresh()) || (await currentAuth());
     if (!auth || !auth.token) return; // nothing to sync with; try again next trigger
 
-    await drain(store, (item) => api.call(item.op, item.args, auth.token));
+    const result = await drain(store, (item) => api.call(item.op, item.args, auth.token));
     queue = await store.listQueue();
+
+    if (result.needsAuth) {
+      // The server itself rejected the token mid-drain — unlike offline or
+      // a server hiccup, this doesn't clear on its own when the network
+      // comes back, so the connection line has to say something the
+      // person can act on (connLabel's 'sign in again', and a tap on it
+      // re-runs signIn — see onConnClick). Skip the bootstrap refetch: the
+      // same rejected token can't fetch that either.
+      conn.needsAuth = true;
+      return;
+    }
 
     const res = await api.call('bootstrap', {}, auth.token);
     if (res.ok) {
@@ -158,23 +181,23 @@ export async function boot() {
     if (e.target.id === 'entry-form') onSubmit(e);
   });
   document.getElementById('screen').addEventListener('click', onScreenClick);
-  document.getElementById('conn').addEventListener('click', () => { if (navigator.onLine) sync(); });
+  document.getElementById('conn').addEventListener('click', onConnClick);
   window.addEventListener('online', () => { conn.online = true; renderConn(conn); sync(); });
   window.addEventListener('offline', () => { conn.online = false; renderConn(conn); });
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && navigator.onLine) sync();
   });
 
+  // Checked before the first render, not after: rendering the cached form
+  // and then swapping it for the sign-in button a moment later would flash
+  // a screen the signed-out person isn't allowed to act on.
+  if (!(await currentAuth())) {
+    await signIn(); // renders Google's button into #screen itself
+  }
+
   view = await getView('bootstrap');
   queue = await store.listQueue();
   render();
-
-  if (!(await currentAuth())) {
-    await signIn(); // renders Google's button into #screen itself, replacing the form until it resolves
-    view = await getView('bootstrap');
-    queue = await store.listQueue();
-    render();
-  }
 
   if (navigator.onLine) sync();
 }

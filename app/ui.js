@@ -45,10 +45,42 @@ export function validateEntry(entry) {
 export function connLabel(state) {
   if (!state.online) return 'offline';
   if (state.syncing) return 'syncing…';
+  // Distinct from offline or a server hiccup: the server rejected the
+  // token itself, so nothing will send again until a person actually
+  // signs in — it won't clear on its own the way "offline" does the
+  // moment the network comes back.
+  if (state.needsAuth) return 'sign in again';
   // `at` may be a full 'YYYY-MM-DD HH:MM' or just 'HH:MM'; either way the
   // last space-separated token is the time, which is all this line shows.
   if (state.at) return 'synced ' + String(state.at).split(' ').pop();
   return 'not synced yet';
+}
+
+/** entryFrom (and the wire format addEntry expects) always carries an
+    unsigned amount plus a separate `direction` — Ledger.gs's appendEntry_
+    runs validateEntry_ (which rejects amount <= 0) BEFORE entryRow_ applies
+    signAmount_, so a pre-signed negative amount fails validation every
+    time and gets permanently parked. Nothing that reaches the wire may
+    ever be signed. This is only for turning that unsigned+direction shape
+    back into a plain signed number for display and for the one local sum
+    below — never for what gets queued or sent. */
+export function directedAmount(entry) {
+  const n = Math.abs(Number(entry.amount) || 0);
+  return entry.direction === 'out' ? -n : n;
+}
+
+/** queue.js's pendingFor sums `args.entry.amount` assuming it is already
+    signed (that's the shape its own selfcheck.js fixtures use, and it is
+    reviewed and frozen). The queue actually holds addEntry items in the
+    unsigned+direction wire shape above, so this maps a local, throwaway
+    copy — never written back to the store — to a signed amount just for
+    that one arithmetic call. */
+export function pendingBalance(queue, account) {
+  const signedQueue = queue.map((item) => (item.op !== 'addEntry' ? item : {
+    ...item,
+    args: { ...item.args, entry: { ...item.args.entry, amount: directedAmount(item.args.entry) } },
+  }));
+  return pendingFor(signedQueue, account);
 }
 
 function field(labelText, input) {
@@ -114,7 +146,7 @@ export function renderEntry(state) {
       right.className = 'txn-right';
       const amt = document.createElement('div');
       amt.className = 'txn-amount fig';
-      amt.textContent = peso(a.balance + pendingFor(queue, a.name));
+      amt.textContent = peso(a.balance + pendingBalance(queue, a.name));
       right.appendChild(amt);
       const note = document.createElement('div');
       note.className = 'txn-balance';
@@ -222,10 +254,9 @@ export function renderPending(queue) {
     right.className = 'txn-right';
     const amt = document.createElement('div');
     amt.className = 'txn-amount fig';
-    // Queued amounts are already signed (main.js folds direction into the
-    // sign before enqueuing — see its onSubmit comment) to match pendingFor's
-    // own contract below, so this is just the sum's sign, not a re-derive.
-    amt.textContent = signed(e.amount);
+    // e.amount is unsigned (the wire shape, per entryFrom's own doc
+    // comment) — directedAmount folds e.direction back in for display only.
+    amt.textContent = signed(directedAmount(e));
     right.appendChild(amt);
     const del = document.createElement('button');
     del.type = 'button';

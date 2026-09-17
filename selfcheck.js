@@ -184,7 +184,7 @@ import { buildRequest, readResponse } from './app/api.js';
 
 console.log('api self-check passed');
 
-import { entryFrom, connLabel } from './app/ui.js';
+import { entryFrom, connLabel, directedAmount, pendingBalance } from './app/ui.js';
 
 {
   const e = entryFrom({
@@ -206,6 +206,32 @@ import { entryFrom, connLabel } from './app/ui.js';
     'synced 15:40', 'otherwise the last sync time');
   assert.equal(connLabel({ online: true, syncing: false }), 'not synced yet',
     'and nothing to report before the first sync');
+  assert.equal(connLabel({ online: true, syncing: false, needsAuth: true }), 'sign in again',
+    'a rejected token gets its own line, distinct from offline or unsynced');
+}
+
+{
+  // Regression guard: a Withdrawal must never leave entryFrom (or, from
+  // there, the queue) with a negative amount — Ledger.gs's appendEntry_
+  // validates BEFORE it signs, so a pre-signed amount fails "Enter an
+  // amount greater than zero." and gets permanently parked, silently
+  // refusing every expense logged from this app.
+  const withdrawal = entryFrom({ type: 'Withdrawal', amount: '75' }, 'z');
+  assert.equal(withdrawal.amount, 75, 'entryFrom always reports a positive amount');
+  assert.ok(withdrawal.amount > 0, 'never signed, whatever the direction');
+  assert.equal(withdrawal.direction, 'out', 'the sign lives in direction instead');
+
+  // pendingFor (queue.js, frozen) sums args.entry.amount as already
+  // signed; pendingBalance reconciles that against the unsigned+direction
+  // shape actual queued items carry, without touching what's queued.
+  const queue = [
+    { op: 'addEntry', state: 'pending', args: { entry: { account: 'A', amount: 100, direction: 'out' } } },
+    { op: 'addEntry', state: 'pending', args: { entry: { account: 'A', amount: 50, direction: 'in' } } },
+  ];
+  assert.equal(pendingBalance(queue, 'A'), -50,
+    'a withdrawal subtracts and a deposit adds, from unsigned amount + direction');
+  assert.equal(directedAmount({ amount: 20, direction: 'out' }), -20, 'out is negative');
+  assert.equal(directedAmount({ amount: 20, direction: 'in' }), 20, 'in is positive');
 }
 
 console.log('ui self-check passed');

@@ -2,11 +2,18 @@
 // server has not yet seen. Order is part of what these entries mean (two
 // withdrawals from the same account must land in the order they happened),
 // so the queue is a strict FIFO, drained one item at a time, never in
-// parallel.
+// parallel. The `at` stamp is not simply Date.now(): two entries queued in
+// the same millisecond would otherwise tie, and IndexedDB's getAll() breaks
+// a tie by primary key — a random UUID — silently reordering two money
+// entries for the same account. Forcing each stamp past the previous one
+// makes the sort total.
 
 /** Stores a pending operation and returns the stored record. */
 export async function enqueue(store, op, args) {
-  const item = { id: crypto.randomUUID(), op, args, at: Date.now(), state: 'pending' };
+  const queue = await store.listQueue(); // oldest first, so the last entry holds the current max `at`
+  const maxAt = queue.length ? queue[queue.length - 1].at : 0;
+  const at = Math.max(Date.now(), maxAt + 1);
+  const item = { id: crypto.randomUUID(), op, args, at, state: 'pending' };
   await store.putQueued(item);
   return item;
 }
@@ -31,13 +38,17 @@ export async function drain(store, send) {
       result = { ok: false, kind: 'server' };
     }
 
-    if (result.ok) {
+    // Guard against a nullish or malformed resolution (undefined, null, {})
+    // — that is not a crash, just not success, so it falls through to the
+    // same generic stop branch as a thrown error rather than throwing a
+    // TypeError out of drain and losing the run's counts.
+    if (result && result.ok === true) {
       await store.removeQueued(item.id);
       counts.sent += 1;
       continue;
     }
 
-    if (result.kind === 'conflict') {
+    if (result && result.kind === 'conflict') {
       // A conflict means this one item is stale (e.g. edited elsewhere since
       // it was queued) — not that the connection or the queue is broken. It
       // gets parked with its message for the user to resolve, and the run
@@ -48,7 +59,7 @@ export async function drain(store, send) {
       continue;
     }
 
-    if (result.kind === 'auth') {
+    if (result && result.kind === 'auth') {
       // The user needs to sign in again; nothing after this can succeed
       // either, so stop and say why. The item stays pending.
       counts.stopped = true;

@@ -90,6 +90,40 @@ console.log('db self-check passed');
   let tried = [];
   await drain(store, async (item) => { tried.push(item.id); return { ok: true }; });
   assert.deepEqual(tried, [e2.id], 'the parked item was skipped');
+
+  // A thrown send (a network error) stops the run without crashing drain —
+  // it must return its counts, not reject — and the item stays pending.
+  const f = await enqueue(store, 'addEntry', { entry: { account: 'A', amount: -5 } });
+  out = await drain(store, async () => { throw new Error('offline'); });
+  assert.equal(out.stopped, true, 'a thrown send stops the run');
+  assert.equal((await store.listQueue()).find(q => q.id === f.id).state, 'pending',
+    'and the item stays pending rather than crashing drain');
+
+  // A malformed (nullish) resolution is not a crash either — just not
+  // success — so it falls through to the same stop branch.
+  out = await drain(store, async () => undefined);
+  assert.equal(out.stopped, true, 'an undefined resolution stops the run too');
+  assert.equal((await store.listQueue()).find(q => q.id === f.id).state, 'pending',
+    'still pending, not parked');
+}
+
+{
+  // Two entries queued in the same millisecond must still sort in the order
+  // they were queued — a tie broken by a random UUID would silently reorder
+  // two money entries for the same account.
+  const store = memoryStore();
+  const realNow = Date.now;
+  Date.now = () => 1000; // force the tie enqueue must break, rather than relying on real timing
+  let a2, b2;
+  try {
+    a2 = await enqueue(store, 'addEntry', { entry: { account: 'A', amount: -1 } });
+    b2 = await enqueue(store, 'addEntry', { entry: { account: 'A', amount: -2 } });
+  } finally {
+    Date.now = realNow;
+  }
+  assert.ok(b2.at > a2.at, 'a stamped tie is broken, strictly increasing');
+  assert.deepEqual((await store.listQueue()).map(q => q.id), [a2.id, b2.id],
+    'and the queue sorts in the order they were queued');
 }
 
 {

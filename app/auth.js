@@ -30,9 +30,14 @@ function whenGoogleReady(timeoutMs = 5000) {
 }
 
 // A JWT's payload is unsigned-looking base64 — anyone could write anything
-// in it client-side, so this decode proves nothing and is read for display
-// only (the top bar's "signed in as…"). The server re-derives the email
-// from the verified token itself and never trusts what the client sends.
+// in it client-side, so this decode proves nothing. It is used only to fill
+// `email` on the stored auth record, which currentAuth()/signOut() below
+// test for truthiness to decide "is someone signed in" — never trusted for
+// anything money-related. The server re-derives the email from the verified
+// token itself and never trusts what the client sends. (The top bar's
+// "signed in as…" — round-2 review, C5 — reads `view.user` from the
+// bootstrap payload instead, in main.js's render(): that name comes from
+// the server's own verified email, not this unverified decode.)
 // A credential that isn't three dot-separated segments of valid base64 JSON
 // (never expected from Google, but a callback argument is never a promise
 // worth trusting blindly) returns '' rather than throwing out of here.

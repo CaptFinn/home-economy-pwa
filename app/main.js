@@ -24,6 +24,13 @@ function render() {
   renderEntry({ view, queue }); // rebuilds #screen, including an empty pending slot
   renderPending(queue); // fills that slot in
   renderConn(conn);
+  // bootstrap.data.user is already on the wire (Code.gs's getBootstrap) and
+  // was simply discarded until now (round-2 review, C5) — #whoami is a
+  // fixed element in index.html's topbar, never recreated, so this can just
+  // write it directly rather than routing it through ui.js's rebuild-heavy
+  // render functions.
+  const whoami = document.getElementById('whoami');
+  if (whoami) whoami.textContent = view && view.user ? view.user : '';
 }
 
 function hint(message) {
@@ -104,7 +111,17 @@ function onScreenClick(event) {
     same way again; otherwise a tap is just a manual sync trigger. */
 async function onConnClick() {
   if (conn.needsAuth) {
-    await signIn();
+    // signIn() needs the network the same as any other Google call — no
+    // point starting it offline (round-2 review, C5). And it can reject the
+    // same way boot() found it can (C3: the library never loaded); without
+    // a catch that would be an unhandled rejection out of an event handler
+    // instead of just leaving conn.needsAuth true for the next tap.
+    if (!navigator.onLine) return;
+    try {
+      await signIn();
+    } catch (err) {
+      return;
+    }
     conn.needsAuth = false;
     view = await getView('bootstrap');
     queue = await store.listQueue();
@@ -174,6 +191,38 @@ export async function boot() {
     navigator.serviceWorker.register('sw.js').catch(() => {}); // offline-first still works if this fails
   }
 
+  // Checked, and fully resolved, before ANY listener below is registered
+  // (round-2 review, C4) — not just before the first render. sync() (which
+  // every one of online/visibilitychange/conn-click can reach) calls
+  // refresh(), which calls google.accounts.id.initialize() a second time.
+  // GIS's initialize is global, so that second call silently replaces the
+  // callback THIS signIn() is still waiting on, and signIn()'s promise never
+  // settles — a visibilitychange firing while the sign-in popup is open
+  // (switching to it is often what triggers one) is the common case. Doing
+  // this before registering any listener means none of them can fire sync()
+  // while a sign-in is still in flight.
+  //
+  // Rendering the cached form and then swapping it for the sign-in button a
+  // moment later would also flash a screen the signed-out person isn't
+  // allowed to act on — checked before the first render() call below for
+  // that reason too.
+  if (!(await currentAuth())) {
+    try {
+      await signIn(); // renders Google's button into #screen itself
+    } catch (err) {
+      // signIn() rejects if Google's library never loads at all — offline
+      // on first run, an ad-blocker, corporate DNS (round-2 review, C3).
+      // Unhandled, that rejection propagates out of boot(), render() never
+      // runs, and the person is left staring at a blank page with nothing
+      // to tap. Painting a plain message is the least this can do; nothing
+      // past this point can work without a session anyway, so stop here
+      // rather than fall through into a render() that has nothing to show.
+      const screen = document.getElementById('screen');
+      if (screen) screen.textContent = 'Could not load sign-in. Check your connection and reload.';
+      return;
+    }
+  }
+
   // The form itself is rebuilt on every render(), so its listener has to be
   // delegated from #screen (which index.html creates once and never
   // replaces) rather than attached to the form directly.
@@ -187,13 +236,6 @@ export async function boot() {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && navigator.onLine) sync();
   });
-
-  // Checked before the first render, not after: rendering the cached form
-  // and then swapping it for the sign-in button a moment later would flash
-  // a screen the signed-out person isn't allowed to act on.
-  if (!(await currentAuth())) {
-    await signIn(); // renders Google's button into #screen itself
-  }
 
   view = await getView('bootstrap');
   queue = await store.listQueue();

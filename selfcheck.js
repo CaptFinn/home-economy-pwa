@@ -184,7 +184,7 @@ import { buildRequest, readResponse } from './app/api.js';
 
 console.log('api self-check passed');
 
-import { entryFrom, connLabel, directedAmount, pendingBalance } from './app/ui.js';
+import { entryFrom, connLabel, directedAmount, pendingBalance, validateEntry } from './app/ui.js';
 
 {
   const e = entryFrom({
@@ -199,6 +199,18 @@ import { entryFrom, connLabel, directedAmount, pendingBalance } from './app/ui.j
     'Deposit is money in');
   assert.equal(entryFrom({ type: 'Withdrawal', amount: '1,500' }, 'x').amount, null,
     'a comma is not a number — the form must refuse it, not send 1');
+
+  // A blank ledger is refused client-side too (round-2 review, C1) — the
+  // server's validateEntry_ already refused it, but with no client-side
+  // check an entry queued before the first successful bootstrap (formValues
+  // sends view.ledger, which is '' until then) sat in the queue getting
+  // "Pick a ledger." forever, since retrying the same missing value can
+  // never succeed. renderEntry disables the submit control for the same
+  // reason; this is the second, independent guard.
+  const good = { ledger: 'Household', date: '2026-09-16', account: 'A', source_recipient: 'x', amount: 5 };
+  assert.equal(validateEntry({ ...good, ledger: '' }), 'Pick a ledger.', 'a blank ledger is refused');
+  assert.equal(validateEntry({ ...good, ledger: '  ' }), 'Pick a ledger.', 'whitespace-only counts as blank');
+  assert.equal(validateEntry(good), null, 'a real ledger passes');
 
   assert.equal(connLabel({ online: false }), 'offline', 'offline says so');
   assert.equal(connLabel({ online: true, syncing: true }), 'syncing…', 'syncing says so');

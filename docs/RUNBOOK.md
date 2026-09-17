@@ -136,6 +136,16 @@ existing, already-bound project — nothing to create here.
 5. Give GitHub Pages a minute to redeploy (Settings → Pages shows the time
    of the latest deployment), then move on to Verify.
 
+**Every future deploy, not just this first one:** any change under `app/`
+(or to `index.html`, `app.css`, etc. — anything in `sw.js`'s `SHELL` list)
+must also bump the `CACHE` string at the top of `sw.js` (e.g. `home-economy-v1`
+→ `-v2`). The service worker only re-fetches and re-caches the shell when
+that string changes; an already-installed phone otherwise keeps serving the
+old cached files from before the change forever, even after the new code is
+live on Pages — there is no other signal that tells it to update. Bump it as
+part of the same commit as the change, not as an afterthought once someone
+reports the phone "isn't updating."
+
 ## 6. Verify
 
 Each check below is something that can fail on its own — work through them
@@ -180,8 +190,15 @@ work."
      leaving the laptop's actual network).
    - Add one entry. It shows as pending.
    - DevTools → **Application** tab → **IndexedDB → home-economy → queue**.
-     Click the one row and copy its `id` field (a long UUID-looking
-     string).
+     Click the one row and copy the `id` **inside its `args.entry` object**
+     — not the queue record's own top-level `id`. There are two UUIDs on
+     this row: the queue record's own `id` (queue.js's bookkeeping, used to
+     remove the item once it sends) and `args.entry.id` (the one entryFrom
+     assigned, which is what actually travels to the server and lands in
+     column K — see `entryFrom` in `app/ui.js`). Pasting the wrong one below
+     will look like a failure — column K never matches, because the id
+     you'd have copied was never sent anywhere — while the actual mechanism
+     works fine.
    - In the spreadsheet's `Ledger` tab, pick any row (a throwaway one is
      fine) and paste that same string into its `Id` (column K) cell by
      hand — this stands in for "the row already made it to the sheet, but

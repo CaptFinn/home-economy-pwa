@@ -1,7 +1,9 @@
 // Caches the app shell so the phone loads offline. The one thing this
 // worker must never do is answer for the Apps Script API: a cached money
-// reply that's gone stale is worse than no reply at all, so every request
-// to API_URL is handed straight to the network, untouched, below.
+// reply that's gone stale is worse than no reply at all — but every call to
+// it is a POST, and the `req.method !== 'GET'` return below already lets
+// every one of those through untouched, so there is nothing left for a GET
+// branch to guard.
 const CACHE = 'home-economy-v1'; // bump this string to retire the old cache on the next activate
 
 const SHELL = [
@@ -10,11 +12,12 @@ const SHELL = [
   'app/ui.js', 'app/main.js',
 ];
 
-// config.js is an ES module (`export const API_URL`); importScripts() can't
-// parse `export` syntax, so this worker stays a classic script (registered
-// with no {type:'module'}, which every target browser supports) and reads
-// API_URL with a dynamic import instead — that works in a classic worker too.
-const apiUrl = import('./config.js').then((m) => m.API_URL);
+// Never `import()` config.js (or anything else) from in here (round-2
+// review, C2): a service worker's module graph has to be statically known
+// at registration, so a dynamic import's promise rejects for every event —
+// here, that meant every same-origin GET rejected before it ever reached
+// caches.match, and the shell was never served offline at all, defeating
+// this file's entire purpose.
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)));
@@ -34,14 +37,6 @@ self.addEventListener('fetch', (event) => {
   if (req.method !== 'GET') return; // POSTs (addEntry, bootstrap, …) are never this worker's concern
 
   event.respondWith((async () => {
-    const API_URL = await apiUrl;
-    // Bypass entirely — no cache read, no cache write — see the file header.
-    // ponytail: defensive only, for now — every current call to API_URL is
-    // a POST, which the early return above already lets straight through.
-    // Kept so a future GET (e.g. a health check) can't quietly start being
-    // answered from a stale cache the day one is added.
-    if (req.url.startsWith(API_URL)) return fetch(req);
-
     if (req.mode === 'navigate') {
       // An SPA: any navigation is the one shell page, regardless of the
       // exact URL requested.

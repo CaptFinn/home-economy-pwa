@@ -32,8 +32,14 @@ export function entryFrom(form, id) {
 
 /** Same checks the Apps Script app runs server-side (Ledger.gs's
     validateEntry_), run again here so a bad entry never even reaches the
-    queue — retrying the same bad data on sync can't ever succeed. */
+    queue — retrying the same bad data on sync can't ever succeed. The ledger
+    check goes first, matching validateEntry_'s own order, and matters for a
+    reason the others don't: renderEntry disables the submit control whenever
+    there is no ledger yet (round-2 review, C1), so this is a second line of
+    defence for anything that can still call entryFrom/validateEntry without
+    going through that form — never the only guard. */
 export function validateEntry(entry) {
+  if (!String(entry.ledger || '').trim()) return 'Pick a ledger.';
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(entry.date))) return 'Pick a valid date.';
   if (!String(entry.account || '').trim()) return 'Pick an account.';
   if (!String(entry.source_recipient || '').trim()) return 'Enter a source or recipient.';
@@ -146,12 +152,18 @@ export function renderEntry(state) {
       right.className = 'txn-right';
       const amt = document.createElement('div');
       amt.className = 'txn-amount fig';
-      amt.textContent = peso(a.balance + pendingBalance(queue, a.name));
+      const pending = pendingBalance(queue, a.name);
+      amt.textContent = peso(a.balance + pending);
       right.appendChild(amt);
-      const note = document.createElement('div');
-      note.className = 'txn-balance';
-      note.textContent = 'includes pending';
-      right.appendChild(note);
+      // Only when something is actually queued for THIS account (round-2
+      // review, C5) — otherwise every account row claimed to include
+      // pending money whether or not any was queued.
+      if (pending !== 0) {
+        const note = document.createElement('div');
+        note.className = 'txn-balance';
+        note.textContent = 'includes pending';
+        right.appendChild(note);
+      }
       row.appendChild(right);
 
       balances.appendChild(row);
@@ -210,6 +222,19 @@ export function renderEntry(state) {
   hint.className = 'hint';
   hint.id = 'entry-hint';
   hint.setAttribute('role', 'status');
+
+  // formValues() (main.js) sends whatever ledger is in `view`, which is ''
+  // before the first successful bootstrap (a fresh install taken offline,
+  // or just the window before the first sync returns) — and the server
+  // refuses a blank ledger permanently, since retrying the same missing
+  // value can't ever succeed. Disabling here (round-2 review, C1) stops
+  // that entry from ever being queued, rather than parking it forever
+  // after the fact.
+  if (!view.ledger) {
+    submit.disabled = true;
+    hint.textContent = 'Waiting for the first sync before you can add entries.';
+    hint.setAttribute('data-state', 'error');
+  }
   form.appendChild(hint);
 
   screen.appendChild(form);

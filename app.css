@@ -90,6 +90,12 @@ body {
 
 /* ── entry form ─────────────────────────────────────── */
 
+/* Date and Type side by side (round-2 review, C5) — copied from the sibling
+   app's Index.html, whose .field already carries the bottom margin these
+   halves need, so .row2 itself only has to lay them out. */
+.row2 { display: flex; gap: 10px; }
+.row2 .field { flex: 1; margin-bottom: 12px; }
+
 .field { margin-bottom: 12px; }
 .field label {
   display: block;
@@ -209,3 +215,18 @@ body {
 .conn[data-state="offline"] { color: var(--out); }
 .pending { opacity: 0.65; }
 .pending-mark { font-size: 11px; color: var(--muted); }
+
+/* The Remove control (round-2 review, C5) — copied from the sibling app's
+   Index.html, whose .linkish is what ui.js's `del.className` already names;
+   without it Remove rendered as a default button instead of the plain
+   underlined text link the reference app uses for the same action. */
+.linkish {
+  padding: 0;
+  font: 400 12px var(--sans);
+  color: var(--ink);
+  background: none;
+  border: none;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}

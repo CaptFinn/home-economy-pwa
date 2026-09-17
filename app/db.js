@@ -8,6 +8,14 @@ const DB_NAME = 'home-economy';
 const DB_VERSION = 1;
 const AUTH_ID = 'me';
 
+// ponytail: openDb() opens a fresh connection every call and none of them is
+// ever closed, and there's no onversionchange handler either — fine while
+// DB_VERSION never changes, but a later stage bumping it to add a store will
+// hit every tab's leaked connections refusing the upgrade (onupgradeneeded
+// blocks until they close), and there's nothing here to prompt a reload.
+// Fix then: close after each store() call, or track one shared connection
+// and add onversionchange to reload/close it.
+
 /** Wraps an IDBRequest in a promise; used for every store op below. */
 function promisify(request) {
   return new Promise((resolve, reject) => {

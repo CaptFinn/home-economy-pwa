@@ -142,14 +142,14 @@ Each check below is something that can fail on its own — work through them
 in order, so a failure points at one specific thing rather than "it doesn't
 work."
 
-1. **Open the Pages URL on a laptop.** The screen shows Google's sign-in
-   button in place of the entry form. Tap it and sign in with your Google
-   account. The button is replaced by the New Entry form — that round trip
-   (`auth.js`'s `signIn()` swapping the screen and back) is what "signed in"
-   looks like right now; the top bar has a `#whoami` slot reserved for
-   showing the signed-in email, but nothing in this stage's code writes to
-   it yet. That's a known gap in this stage, not something broken by these
-   deploy steps — no need to chase it here.
+1. **Open the Pages URL on a laptop.** With no one signed in on this device
+   yet, the very first thing the screen shows is Google's sign-in button —
+   `boot()` checks for a stored session before it renders anything else, so
+   there's no flash of a form first. Tap the button and sign in with your
+   Google account. The New Entry form then appears. The top bar has a
+   `#whoami` slot reserved for showing the signed-in email, but nothing in
+   this stage's code writes to it yet — that's a known gap in this stage,
+   not something broken by these deploy steps, so no need to chase it here.
 2. **Add an entry.** Fill the form (`Which account`, `Who it came from or
    went to`, `What it was for`, an amount) and tap **Add entry**. Within a
    few seconds it appears in the sheet, with `Logged by` showing **your**

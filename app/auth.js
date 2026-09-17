@@ -33,10 +33,19 @@ function whenGoogleReady(timeoutMs = 5000) {
 // in it client-side, so this decode proves nothing and is read for display
 // only (the top bar's "signed in as…"). The server re-derives the email
 // from the verified token itself and never trusts what the client sends.
+// A credential that isn't three dot-separated segments of valid base64 JSON
+// (never expected from Google, but a callback argument is never a promise
+// worth trusting blindly) returns '' rather than throwing out of here.
 function emailFromToken(token) {
-  const base64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
-  const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4);
-  return JSON.parse(atob(padded)).email;
+  const segment = String(token).split('.')[1];
+  if (!segment) return '';
+  try {
+    const base64 = segment.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4);
+    return JSON.parse(atob(padded)).email || '';
+  } catch {
+    return '';
+  }
 }
 
 async function storeCredential(response) {
@@ -49,10 +58,18 @@ async function storeCredential(response) {
     in, with the auth already saved to IndexedDB. */
 export async function signIn() {
   await whenGoogleReady();
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     google.accounts.id.initialize({
       client_id: CLIENT_ID,
-      callback: (response) => storeCredential(response).then(resolve),
+      // storeCredential() can reject (putAuth() throwing on a blocked or
+      // quota-full IndexedDB). That rejection lands on the promise this
+      // callback creates, not on any surrounding try/catch — there isn't
+      // one here, and GIS never awaits this callback either — so left
+      // unhandled it is simply lost and this signIn() promise hangs
+      // forever. Rejecting here instead means a broken sign-in surfaces as
+      // a rejected promise the caller can catch and show, rather than a
+      // screen that never moves.
+      callback: (response) => storeCredential(response).then(resolve, reject),
     });
     const screen = document.getElementById('screen');
     screen.textContent = '';
@@ -82,7 +99,13 @@ export async function refresh() {
     return await new Promise((resolve) => {
       google.accounts.id.initialize({
         client_id: CLIENT_ID,
-        callback: (response) => storeCredential(response).then(resolve),
+        // Same detached-promise hazard as signIn() above: this callback's
+        // own promise is not awaited by the try/catch wrapping this
+        // function, so a rejection from storeCredential() here would
+        // otherwise vanish rather than being caught below. Resolving null
+        // on that rejection keeps refresh()'s contract — anything short of
+        // a fresh token is null, never a hang or an uncaught rejection.
+        callback: (response) => storeCredential(response).then(resolve, () => resolve(null)),
       });
       google.accounts.id.prompt((notification) => {
         if (notification.isNotDisplayed() || notification.isSkippedMoment()) resolve(null);

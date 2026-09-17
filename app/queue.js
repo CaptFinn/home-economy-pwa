@@ -48,12 +48,16 @@ export async function drain(store, send) {
       continue;
     }
 
-    if (result && result.kind === 'conflict') {
+    if (result && (result.kind === 'conflict' || result.kind === 'validation')) {
       // A conflict means this one item is stale (e.g. edited elsewhere since
-      // it was queued) — not that the connection or the queue is broken. It
-      // gets parked with its message for the user to resolve, and the run
-      // moves on: one stale edit must not block a shopping trip's worth of
-      // other, healthy entries behind it.
+      // it was queued); a validation failure means the server rejected the
+      // data itself (e.g. a bad account name). Neither is a broken
+      // connection or a broken queue, and neither improves by being
+      // retried — retrying the same bad data just fails the same way again,
+      // forever, and would jam every healthy entry behind it. Both need a
+      // person to look at them, so both get parked with their message and
+      // the run moves on: one bad item must not block a shopping trip's
+      // worth of other, healthy entries behind it.
       await store.putQueued({ ...item, state: 'parked', error: result.error });
       counts.parked += 1;
       continue;

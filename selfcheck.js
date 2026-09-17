@@ -69,6 +69,25 @@ console.log('db self-check passed');
   assert.equal(left[0].state, 'parked', 'marked parked');
   assert.equal(left[0].error, 'That entry changed. Reload and try again.', 'with its message');
 
+  // A validation failure parks exactly like a conflict — retrying the same
+  // bad data can't ever succeed, so it must not jam the queue — and the run
+  // continues past it rather than stopping.
+  const v = await enqueue(store, 'addEntry', { entry: { account: 'A', amount: -30 } });
+  out = await drain(store, async (item) => item.id === v.id
+    ? { ok: false, kind: 'validation', error: 'That account does not exist.' }
+    : { ok: true });
+  assert.equal(out.parked, 1, 'the validation failure was parked, not stopped');
+  assert.equal(out.stopped, false, 'the run did not stop');
+  const parkedV = (await store.listQueue()).find(q => q.id === v.id);
+  assert.equal(parkedV.state, 'parked', 'marked parked');
+  assert.equal(parkedV.error, 'That account does not exist.', 'with its message');
+
+  // A parked validation failure is never retried by a later drain either.
+  let retriedV = false;
+  await drain(store, async (item) => { if (item.id === v.id) retriedV = true; return { ok: true }; });
+  assert.equal(retriedV, false, 'the parked validation item was skipped');
+  await store.removeQueued(v.id);
+
   // A server error stops the run and keeps everything, in order.
   await store.removeQueued(c.id);
   const e1 = await enqueue(store, 'addEntry', { entry: { account: 'A', amount: -1 } });

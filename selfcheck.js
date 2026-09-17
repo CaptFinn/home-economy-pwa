@@ -140,3 +140,27 @@ console.log('db self-check passed');
 }
 
 console.log('queue self-check passed');
+
+import { buildRequest, readResponse } from './app/api.js';
+
+{
+  const req = buildRequest('tok', 'addEntry', { entry: { amount: 5 } });
+  assert.equal(req.method, 'POST', 'always POST');
+  assert.equal(req.headers['Content-Type'], 'text/plain;charset=utf-8',
+    'text/plain, or the browser preflights and Apps Script cannot answer');
+  const body = JSON.parse(req.body);
+  assert.equal(body.token, 'tok', 'the token travels in the body');
+  assert.equal(body.op, 'addEntry', 'with the op');
+  assert.equal(body.args.entry.amount, 5, 'and the args');
+
+  assert.deepEqual(readResponse('{"ok":true,"data":{"a":1}}'), { ok: true, data: { a: 1 } },
+    'a success unwraps');
+  const bad = readResponse('{"ok":false,"error":"nope","kind":"conflict"}');
+  assert.equal(bad.ok, false, 'a failure stays a failure');
+  assert.equal(bad.kind, 'conflict', 'and keeps its kind');
+  const html = readResponse('<!doctype html><title>Sign in</title>');
+  assert.equal(html.ok, false, 'an HTML page is not a response');
+  assert.equal(html.kind, 'auth', 'and means the deployment is asking us to sign in');
+}
+
+console.log('api self-check passed');

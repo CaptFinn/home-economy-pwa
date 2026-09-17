@@ -183,3 +183,29 @@ import { buildRequest, readResponse } from './app/api.js';
 }
 
 console.log('api self-check passed');
+
+import { entryFrom, connLabel } from './app/ui.js';
+
+{
+  const e = entryFrom({
+    ledger: 'Household', date: '2026-09-16', account: 'Electricity',
+    type: 'Withdrawal', source: 'Meralco', description: 'oct bill', amount: '1500',
+  }, 'id-1');
+  assert.equal(e.direction, 'out', 'Withdrawal is money out');
+  assert.equal(e.amount, 1500, 'the amount is unsigned — the server applies the sign');
+  assert.equal(e.id, 'id-1', 'the idempotency id rides along');
+  assert.equal(e.category, '', 'category is not offered by this form');
+  assert.equal(entryFrom({ type: 'Deposit', amount: '20' }, 'x').direction, 'in',
+    'Deposit is money in');
+  assert.equal(entryFrom({ type: 'Withdrawal', amount: '1,500' }, 'x').amount, null,
+    'a comma is not a number — the form must refuse it, not send 1');
+
+  assert.equal(connLabel({ online: false }), 'offline', 'offline says so');
+  assert.equal(connLabel({ online: true, syncing: true }), 'syncing…', 'syncing says so');
+  assert.equal(connLabel({ online: true, syncing: false, at: '2026-09-16 15:40' }),
+    'synced 15:40', 'otherwise the last sync time');
+  assert.equal(connLabel({ online: true, syncing: false }), 'not synced yet',
+    'and nothing to report before the first sync');
+}
+
+console.log('ui self-check passed');

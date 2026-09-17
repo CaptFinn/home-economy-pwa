@@ -6,6 +6,15 @@
 <meta name="theme-color" content="#ffffff">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
+<!-- Same pair the sibling Apps Script app loads (Home_Economy_PWA/home-economy-app/src/Index.html):
+     Jost for the display face, DM Sans for everything small, real tabular
+     figures included. Offline, before the service worker has ever cached
+     these (they're cross-origin, so it never will), the page just falls
+     back to the system stack app.css already names — acceptable; self-hosting
+     the font files is the fix if that ever matters more than it does now. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500&family=Jost:wght@300;400;500&display=swap">
 <link rel="stylesheet" href="app.css">
 <title>Home economy</title>
 

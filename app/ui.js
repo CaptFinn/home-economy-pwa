@@ -310,3 +310,11 @@ export function renderConn(state) {
   if (state.online) conn.removeAttribute('data-state');
   else conn.setAttribute('data-state', 'offline');
 }
+
+/** Backoff for the sync retry: first wait `min`, then double up to `max`.
+    Lives here rather than in main.js because main.js boots the app on
+    import and cannot be loaded by the checks — and this rule is worth
+    pinning. */
+export function nextRetryDelay(previous, min = 5000, max = 60000) {
+  return previous ? Math.min(previous * 2, max) : min;
+}

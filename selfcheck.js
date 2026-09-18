@@ -184,7 +184,7 @@ import { buildRequest, readResponse } from './app/api.js';
 
 console.log('api self-check passed');
 
-import { entryFrom, connLabel, directedAmount, pendingBalance, validateEntry } from './app/ui.js';
+import { nextRetryDelay, entryFrom, connLabel, directedAmount, pendingBalance, validateEntry } from './app/ui.js';
 
 {
   const e = entryFrom({
@@ -248,6 +248,13 @@ import { entryFrom, connLabel, directedAmount, pendingBalance, validateEntry } f
     'a withdrawal subtracts and a deposit adds, from unsigned amount + direction');
   assert.equal(directedAmount({ amount: 20, direction: 'out' }), -20, 'out is negative');
   assert.equal(directedAmount({ amount: 20, direction: 'in' }), 20, 'in is positive');
+}
+
+{
+  assert.equal(nextRetryDelay(0, 5000, 60000), 5000, 'the first retry waits the minimum');
+  assert.equal(nextRetryDelay(5000, 5000, 60000), 10000, 'then doubles');
+  assert.equal(nextRetryDelay(40000, 5000, 60000), 60000, 'and is capped');
+  assert.equal(nextRetryDelay(60000, 5000, 60000), 60000, 'staying at the cap');
 }
 
 console.log('ui self-check passed');

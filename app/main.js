@@ -5,7 +5,7 @@ import { getView, putView, listQueue, putQueued, removeQueued } from './db.js';
 import { enqueue, drain } from './queue.js';
 import * as api from './api.js';
 import { currentAuth, refresh, signIn } from './auth.js';
-import { entryFrom, validateEntry, renderEntry, renderPending, renderConn } from './ui.js';
+import { entryFrom, validateEntry, renderEntry, renderPending, renderConn, nextRetryDelay } from './ui.js';
 
 // memoryStore()'s shape, over the real IndexedDB functions — queue.js and
 // this module don't need to know the difference.
@@ -19,6 +19,34 @@ const store = {
 let view = null;
 let queue = [];
 const conn = { online: navigator.onLine, syncing: false, at: null, error: '' };
+
+// navigator.onLine goes true the moment the OS sees an interface, which is
+// routinely before anything can actually be reached — so the sync fired by
+// the `online` event often fails, and without this nothing would try again
+// until a person tapped the status line. Unsent money must never depend on
+// somebody noticing.
+const RETRY_MIN_MS = 5000;
+const RETRY_MAX_MS = 60000;
+let retryTimer = null;
+let retryDelay = 0;
+
+function clearRetry() {
+  if (retryTimer) clearTimeout(retryTimer);
+  retryTimer = null;
+  retryDelay = 0;
+}
+
+function scheduleRetry() {
+  // One timer at a time; nothing to retry when the queue is empty, the device
+  // is offline (the `online` event covers that), or the token was rejected —
+  // a retry cannot fix that one and would just spin.
+  if (retryTimer || !queue.length || !navigator.onLine || conn.needsAuth) return;
+  retryDelay = nextRetryDelay(retryDelay);
+  retryTimer = setTimeout(() => {
+    retryTimer = null;
+    sync();
+  }, retryDelay);
+}
 
 function render() {
   // conn travels too: when a sync fails, the form's own hint is where the
@@ -190,12 +218,16 @@ export async function sync() {
     await putView('bootstrap', res.data);
     view = res.data;
     conn.error = '';
+    clearRetry(); // a good sync resets the backoff
 
     const d = new Date();
     conn.at = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
   } finally {
     syncing = false;
     conn.syncing = false;
+    // Anything still queued means the run did not clear it — a failure, a
+    // stop, or a token that needs a person. Keep trying on our own.
+    if (queue.length) scheduleRetry();
     render();
   }
 }
@@ -245,8 +277,8 @@ export async function boot() {
   });
   document.getElementById('screen').addEventListener('click', onScreenClick);
   document.getElementById('conn').addEventListener('click', onConnClick);
-  window.addEventListener('online', () => { conn.online = true; renderConn(conn); sync(); });
-  window.addEventListener('offline', () => { conn.online = false; renderConn(conn); });
+  window.addEventListener('online', () => { conn.online = true; clearRetry(); renderConn(conn); sync(); });
+  window.addEventListener('offline', () => { conn.online = false; clearRetry(); renderConn(conn); });
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && navigator.onLine) sync();
   });

@@ -289,5 +289,3 @@ export async function boot() {
 
   if (navigator.onLine) sync();
 }
-
-boot();

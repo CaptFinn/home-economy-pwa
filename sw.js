@@ -4,7 +4,7 @@
 // it is a POST, and the `req.method !== 'GET'` return below already lets
 // every one of those through untouched, so there is nothing left for a GET
 // branch to guard.
-const CACHE = 'home-economy-v2'; // bump this string to retire the old cache on the next activate
+const CACHE = 'home-economy-v3'; // bump this string to retire the old cache on the next activate
 
 const SHELL = [
   'index.html', 'app.css', 'config.js', 'icon.svg', 'manifest.webmanifest',
@@ -36,15 +36,31 @@ self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return; // POSTs (addEntry, bootstrap, …) are never this worker's concern
 
+  // Cross-origin (Google Fonts, GSI, telemetry) is left entirely alone: not
+  // answering at all is different from answering with fetch(). If we call
+  // respondWith and that fetch rejects — an ad blocker, a dead network — the
+  // rejection surfaces as an uncaught error and, for a navigation, kills the
+  // page. The browser handles its own requests better than we can.
+  if (new URL(req.url).origin !== location.origin) return;
+
   event.respondWith((async () => {
-    if (req.mode === 'navigate') {
-      // An SPA: any navigation is the one shell page, regardless of the
-      // exact URL requested.
-      return (await caches.match('index.html')) || fetch(req);
+    // Any navigation is the one shell page, whatever URL was asked for.
+    const key = req.mode === 'navigate' ? 'index.html' : req;
+    const hit = await caches.match(key);
+    if (hit) return hit;
+
+    // Cache miss. The network may also be gone, and a rejected promise here
+    // becomes a browser network-error page rather than anything we control —
+    // so failure has to be a Response, not a throw.
+    try {
+      return await fetch(req);
+    } catch (err) {
+      const shell = await caches.match('index.html');
+      if (req.mode === 'navigate' && shell) return shell;
+      return new Response('Offline, and this is not in the cache yet.', {
+        status: 503,
+        headers: { 'Content-Type': 'text/plain' },
+      });
     }
-    if (new URL(req.url).origin === location.origin) {
-      return (await caches.match(req)) || fetch(req);
-    }
-    return fetch(req); // cross-origin (Google Fonts, GSI) — not this worker's job to cache
   })());
 });

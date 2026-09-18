@@ -302,6 +302,30 @@ export function renderPending(queue) {
   });
 }
 
+/** Rebuilds the ledger switcher — #ledger-select, fixed in index.html's
+    topbar, like #conn — from `state.view.ledgers`, and selects the active
+    book. Disabled whenever a switch could not actually work: no view yet
+    (nothing to switch between before the first sync), offline (the other
+    books' accounts are not cached — offering a switch that cannot work is
+    the same lie as a status line reporting a sync it never did), or only
+    one ledger to begin with. */
+export function renderLedgers(state) {
+  const select = document.getElementById('ledger-select');
+  const view = state.view;
+  const ledgers = (view && view.ledgers) || [];
+
+  select.textContent = '';
+  ledgers.forEach((name) => {
+    const opt = document.createElement('option');
+    opt.value = name; // a ledger name typed by a person earlier — never built as HTML
+    opt.textContent = name;
+    select.appendChild(opt);
+  });
+  if (view) select.value = view.ledger;
+
+  select.disabled = !view || !state.conn.online || ledgers.length < 2;
+}
+
 /** Writes the connection line into #conn — already in index.html's topbar,
     never recreated — and marks it offline for the CSS to color red. */
 export function renderConn(state) {

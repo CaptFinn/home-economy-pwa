@@ -5,7 +5,7 @@ import { getView, putView, listQueue, putQueued, removeQueued } from './db.js';
 import { enqueue, drain } from './queue.js';
 import * as api from './api.js';
 import { currentAuth, refresh, signIn } from './auth.js';
-import { entryFrom, validateEntry, renderEntry, renderPending, renderConn, nextRetryDelay } from './ui.js';
+import { entryFrom, validateEntry, renderEntry, renderPending, renderConn, renderLedgers, nextRetryDelay } from './ui.js';
 
 // memoryStore()'s shape, over the real IndexedDB functions — queue.js and
 // this module don't need to know the difference.
@@ -54,6 +54,7 @@ function render() {
   renderEntry({ view, queue, conn }); // rebuilds #screen, including an empty pending slot
   renderPending(queue); // fills that slot in
   renderConn(conn);
+  renderLedgers({ view, conn }); // #ledger-select is fixed in index.html's topbar, like #conn
   // bootstrap.data.user is already on the wire (Code.gs's getBootstrap) and
   // was simply discarded until now (round-2 review, C5) — #whoami is a
   // fixed element in index.html's topbar, never recreated, so this can just
@@ -186,7 +187,16 @@ export async function sync() {
     // hand is proof for about an hour, so falling back to the stored one
     // avoids blocking a sync on a UI Google chose not to show.
     const auth = (await refresh()) || (await currentAuth());
-    if (!auth || !auth.token) return; // nothing to sync with; try again next trigger
+    if (!auth || !auth.token) {
+      // No stored session at all — not a server rejection, not a network
+      // blip, just nobody signed in on this device. Without needsAuth this
+      // returns having touched neither conn.error nor conn.at, so the next
+      // render falls through connLabel's error check (already reset to ''
+      // above) straight to the OLD `at` and reports a sync that did not
+      // just happen — the exact stale-clock lie §Task 2 review flagged.
+      conn.needsAuth = true;
+      return;
+    }
 
     const result = await drain(store, (item) => api.call(item.op, item.args, auth.token));
     queue = await store.listQueue();
@@ -230,6 +240,38 @@ export async function sync() {
     if (queue.length) scheduleRetry();
     render();
   }
+}
+
+/** The `ledger-select` change handler. Consumes the `ledger` op (spec §4):
+    stage 1 pinned each person to whichever book the server remembered,
+    changeable only by hand-editing a Script Property. This is a foreground
+    action — the control is disabled until a sync has already succeeded
+    once (renderLedgers), so a stored token is already proof of a working
+    session; there's no need to repeat sync()'s refresh()-then-fallback
+    dance for it. */
+export async function switchLedger(name) {
+  const auth = await currentAuth();
+  if (!auth || !auth.token) {
+    renderLedgers({ view, conn }); // restores the select to the current ledger
+    hint('Sign in again to switch ledgers.');
+    return;
+  }
+
+  const res = await api.call('ledger', { ledger: name }, auth.token);
+  if (!res.ok) {
+    // The native <select> already shows the tapped option the moment
+    // `change` fires, before this round trip even starts — a failure here
+    // must put it back, never leave it claiming a book the server refused.
+    renderLedgers({ view, conn });
+    hint(res.error || 'Could not switch ledgers.');
+    return;
+  }
+
+  // Only ledger and accounts change; `ledgers` (the roster) and `user`
+  // carry over from the last bootstrap.
+  view = { ...view, ledger: res.data.ledger, accounts: res.data.accounts };
+  await putView('bootstrap', view); // survives a reload
+  render();
 }
 
 export async function boot() {
@@ -277,8 +319,14 @@ export async function boot() {
   });
   document.getElementById('screen').addEventListener('click', onScreenClick);
   document.getElementById('conn').addEventListener('click', onConnClick);
-  window.addEventListener('online', () => { conn.online = true; clearRetry(); renderConn(conn); sync(); });
-  window.addEventListener('offline', () => { conn.online = false; clearRetry(); renderConn(conn); });
+  document.getElementById('ledger-select').addEventListener('change', (e) => switchLedger(e.target.value));
+  // renderLedgers alongside renderConn, not a full render(): going offline
+  // must disable the switcher on the spot (the other books' accounts are
+  // not cached — leaving it live is the same lie as a status line
+  // claiming a sync that never happened), not whenever the next unrelated
+  // render happens to run.
+  window.addEventListener('online', () => { conn.online = true; clearRetry(); renderConn(conn); renderLedgers({ view, conn }); sync(); });
+  window.addEventListener('offline', () => { conn.online = false; clearRetry(); renderConn(conn); renderLedgers({ view, conn }); });
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && navigator.onLine) sync();
   });

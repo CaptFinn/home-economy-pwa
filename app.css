@@ -88,6 +88,28 @@ body {
 }
 .whoami { color: var(--muted); font-size: 12px; }
 
+/* Copied from the sibling app's Index.html (task 2) so both front ends
+   still look alike, drawn caret included — same technique as .field
+   select below, just sized for the top bar instead of a form row. */
+.ledger-select {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 45%;
+  padding: 4px 22px 4px 8px;
+  font: 500 13px var(--sans);
+  color: var(--ink);
+  background: var(--surface);
+  border: 0.5px solid var(--hairline);
+  border-radius: 8px;
+  appearance: none;
+  /* same drawn caret as .field select — no asset to ship */
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+                    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: calc(100% - 12px) 12px, calc(100% - 8px) 12px;
+  background-size: 4px 4px, 4px 4px;
+  background-repeat: no-repeat;
+}
+
 /* ── entry form ─────────────────────────────────────── */
 
 /* Date and Type side by side (round-2 review, C5) — copied from the sibling

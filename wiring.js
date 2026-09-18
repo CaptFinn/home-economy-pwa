@@ -104,11 +104,16 @@ export function makeDom() {
     body: bodyEl,
   };
 
-  // The fixed elements index.html ships with.
-  for (const id of ['screen', 'conn', 'whoami', 'foot']) {
+  // The fixed elements index.html ships with. Registered in byId (so
+  // getElementById finds them, as it always did) AND appended to the body —
+  // without that second step document.querySelector/All, which walks the
+  // body's actual children rather than the byId map, searched an empty
+  // tree and returned null for every one of them.
+  for (const id of ['screen', 'conn', 'whoami', 'foot', 'ledger-select']) {
     const el = make('div');
     el.id = id;
     byId.set(id, el);
+    bodyEl.appendChild(el);
   }
   return { document, make, byId };
 }
@@ -345,6 +350,43 @@ const { enqueue } = await import('./app/queue.js');
   assert.equal(queuedAfterFailedSync[0].state, 'pending', 'still pending, not parked');
   assert.equal(document.getElementById('conn').textContent, 'sync failed',
     'the connection line never claims a sync that did not happen');
+
+  // ── losing the session must not leave the OLD clock standing (task 2,
+  // carried from Task 1's review) ──────────────────────────────────────
+  // The assertion just above can't catch a regression that stamps conn.at
+  // on failure, because connLabel checks `error` before `at` — the label
+  // still reads 'sync failed' and the lie only surfaces on the NEXT
+  // render, once something (like this) resets `error` without a fresh
+  // success ever having run. Clearing the stored token reproduces exactly
+  // that next render, on a device nobody is signed into any more.
+  await db.putAuth({ email: null, token: null });
+  await main.sync();
+  assert.doesNotMatch(document.getElementById('conn').textContent, /^synced/,
+    'a lost session must not read as a sync that happened');
+}
+
+// ── the ledger switcher (spec §4) ─────────────────────────────────────
+{
+  const select = document.getElementById('ledger-select');
+  assert.ok(select, 'index.html ships a ledger select in the top bar');
+
+  ui.renderLedgers({
+    view: { ledger: 'Bills', ledgers: ['Bills', 'Account 1'] },
+    conn: { online: true },
+  });
+  assert.equal(select.children.length, 2, 'one option per ledger');
+  assert.equal(select.value, 'Bills', 'the current book is selected');
+  assert.equal(select.disabled, false, 'and it is usable online');
+
+  ui.renderLedgers({
+    view: { ledger: 'Bills', ledgers: ['Bills', 'Account 1'] },
+    conn: { online: false },
+  });
+  assert.equal(select.disabled, true,
+    'offline it is disabled: the other books are not cached, and offering a switch that cannot work is a lie');
+
+  ui.renderLedgers({ view: null, conn: { online: true } });
+  assert.equal(select.disabled, true, 'nothing to switch between before the first sync');
 }
 
 console.log('wiring self-check passed');

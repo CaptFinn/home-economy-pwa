@@ -18,10 +18,12 @@ const store = {
 // the offline write queue; `conn` is what renderConn/connLabel show.
 let view = null;
 let queue = [];
-const conn = { online: navigator.onLine, syncing: false, at: null };
+const conn = { online: navigator.onLine, syncing: false, at: null, error: '' };
 
 function render() {
-  renderEntry({ view, queue }); // rebuilds #screen, including an empty pending slot
+  // conn travels too: when a sync fails, the form's own hint is where the
+  // reason belongs — that is the line someone reads when the button is dead.
+  renderEntry({ view, queue, conn }); // rebuilds #screen, including an empty pending slot
   renderPending(queue); // fills that slot in
   renderConn(conn);
   // bootstrap.data.user is already on the wire (Code.gs's getBootstrap) and
@@ -146,6 +148,7 @@ export async function sync() {
   syncing = true;
   conn.syncing = true;
   conn.needsAuth = false; // each run starts by assuming the token is still good
+  conn.error = '';
   renderConn(conn);
 
   try {
@@ -172,10 +175,21 @@ export async function sync() {
     }
 
     const res = await api.call('bootstrap', {}, auth.token);
-    if (res.ok) {
-      await putView('bootstrap', res.data);
-      view = res.data;
+    if (!res.ok) {
+      // Only a real success may move the clock. Stamping conn.at here
+      // regardless is what let the line read "synced 15:50" while the view
+      // was still null and the form stayed dead — a status that lies is
+      // worse than no status, because it sends you looking in the wrong
+      // place. An empty queue means drain never saw this rejection, so
+      // this is the only chance to report it.
+      if (res.kind === 'auth') conn.needsAuth = true;
+      conn.error = res.error || 'Could not reach the sheet.';
+      return;
     }
+
+    await putView('bootstrap', res.data);
+    view = res.data;
+    conn.error = '';
 
     const d = new Date();
     conn.at = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');

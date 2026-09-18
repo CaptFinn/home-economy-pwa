@@ -216,6 +216,10 @@ import { entryFrom, connLabel, directedAmount, pendingBalance, validateEntry } f
   assert.equal(connLabel({ online: true, syncing: true }), 'syncing…', 'syncing says so');
   assert.equal(connLabel({ online: true, syncing: false, at: '2026-09-16 15:40' }),
     'synced 15:40', 'otherwise the last sync time');
+  assert.equal(connLabel({ online: true, syncing: false, error: 'Sign in again to continue.' }),
+    'sync failed', 'a failed sync never reports itself as synced');
+  assert.equal(connLabel({ online: true, syncing: false, at: '15:50', error: 'boom' }),
+    'sync failed', 'and a stale timestamp does not override the failure');
   assert.equal(connLabel({ online: true, syncing: false }), 'not synced yet',
     'and nothing to report before the first sync');
   assert.equal(connLabel({ online: true, syncing: false, needsAuth: true }), 'sign in again',

@@ -56,6 +56,9 @@ export function connLabel(state) {
   // signs in — it won't clear on its own the way "offline" does the
   // moment the network comes back.
   if (state.needsAuth) return 'sign in again';
+  // A failed sync is not a synced one. Without this the line falls through
+  // to the previous `at` and reports success that did not happen.
+  if (state.error) return 'sync failed';
   // `at` may be a full 'YYYY-MM-DD HH:MM' or just 'HH:MM'; either way the
   // last space-separated token is the time, which is all this line shows.
   if (state.at) return 'synced ' + String(state.at).split(' ').pop();
@@ -232,7 +235,11 @@ export function renderEntry(state) {
   // after the fact.
   if (!view.ledger) {
     submit.disabled = true;
-    hint.textContent = 'Waiting for the first sync before you can add entries.';
+    // The real reason, when there is one: "waiting" is only true while
+    // nothing has gone wrong.
+    hint.textContent = (state.conn && state.conn.error)
+      ? state.conn.error
+      : 'Waiting for the first sync before you can add entries.';
     hint.setAttribute('data-state', 'error');
   }
   form.appendChild(hint);

@@ -97,23 +97,48 @@ export async function currentAuth() {
     dismissed a recent prompt — and the caller's job is to keep the queue and
     ask for a tap instead, never to block sync on a UI Google chose not to
     show. */
+// A silent refresh either answers promptly or is not worth waiting for: the
+// stored token is still valid proof for about an hour, so sync() falls back
+// to it rather than blocking.
+const REFRESH_TIMEOUT_MS = 4000;
+
 export async function refresh() {
   if (!navigator.onLine) return null;
   try {
     await whenGoogleReady();
     return await new Promise((resolve) => {
+      // Every exit from here is bounded. Google may call the credential
+      // callback, or report a dismissed prompt, or — as FedCM rolls out and
+      // isNotDisplayed()/isSkippedMoment() stop being called at all — say
+      // nothing whatsoever. An unbounded wait made sync() hang with the
+      // connection line stuck on "syncing…" forever, which is the failure a
+      // silent refresh is least entitled to cause: its whole contract is
+      // "answer quickly or not at all".
+      let settled = false;
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(value);
+      };
+      const timer = setTimeout(() => finish(null), REFRESH_TIMEOUT_MS);
+
       google.accounts.id.initialize({
         client_id: CLIENT_ID,
         // Same detached-promise hazard as signIn() above: this callback's
         // own promise is not awaited by the try/catch wrapping this
         // function, so a rejection from storeCredential() here would
-        // otherwise vanish rather than being caught below. Resolving null
-        // on that rejection keeps refresh()'s contract — anything short of
-        // a fresh token is null, never a hang or an uncaught rejection.
-        callback: (response) => storeCredential(response).then(resolve, () => resolve(null)),
+        // otherwise vanish rather than being caught below.
+        callback: (response) => storeCredential(response).then(finish, () => finish(null)),
       });
       google.accounts.id.prompt((notification) => {
-        if (notification.isNotDisplayed() || notification.isSkippedMoment()) resolve(null);
+        // These two are deprecated under FedCM and may throw rather than
+        // answer; either way the attempt is over.
+        try {
+          if (notification.isNotDisplayed() || notification.isSkippedMoment()) finish(null);
+        } catch {
+          finish(null);
+        }
       });
     });
   } catch {

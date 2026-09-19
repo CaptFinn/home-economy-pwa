@@ -424,6 +424,66 @@ export function renderRecent(state) {
   screen.appendChild(section);
 }
 
+/** The full log (spec §3.2): one account's whole history, fifty rows a page,
+    replacing the home screen while it is open. The rows arrive with their
+    running balance already attached — page two's balances depend on every
+    newer row, which only the server has, so nothing here recomputes them.
+
+    Offline there is no `Load 50 more` at all, only a line saying why: a
+    button that can only fail is the lie spec §2 rule 1 forbids. */
+export function renderLog(state) {
+  const screen = document.getElementById('screen');
+  screen.textContent = '';
+  const log = state.log;
+
+  const section = document.createElement('section');
+  section.className = 'log';
+  section.id = 'log';
+
+  const head = document.createElement('div');
+  head.className = 'section-head';
+  const back = document.createElement('button');
+  back.type = 'button';
+  back.id = 'log-back';
+  back.className = 'linkish';
+  back.textContent = '‹ Back';
+  head.appendChild(back);
+  const h2 = document.createElement('h2');
+  h2.textContent = log.account + ' — all entries'; // the sibling app's own title
+  head.appendChild(h2);
+  section.appendChild(head);
+
+  log.rows.forEach((t) => section.appendChild(txnRow(t)));
+
+  if (log.hasMore && state.conn.online) {
+    const more = document.createElement('button');
+    more.type = 'button';
+    more.id = 'log-more';
+    more.className = 'more';
+    more.disabled = log.loading;
+    // 'Retry' after a failure, as the sibling app does: the rows already
+    // shown stay, and the same offset is asked for again.
+    more.textContent = log.loading ? 'Loading…' : (log.error ? 'Retry' : 'Load 50 more');
+    section.appendChild(more);
+  }
+
+  const hint = document.createElement('p');
+  hint.className = 'hint';
+  hint.id = 'log-hint';
+  hint.setAttribute('role', 'status');
+  if (log.error) {
+    hint.textContent = log.error;
+    hint.setAttribute('data-state', 'error');
+  } else if (log.hasMore && !state.conn.online) {
+    hint.textContent = "You're offline — older entries need a connection.";
+  } else if (!log.rows.length && !log.loading) {
+    hint.textContent = 'No entries for this account.';
+  }
+  section.appendChild(hint);
+
+  screen.appendChild(section);
+}
+
 /** Rebuilds the ledger switcher — #ledger-select, fixed in index.html's
     topbar, like #conn — from `state.view.ledgers`, and selects the active
     book. Disabled whenever a switch could not actually work: no view yet

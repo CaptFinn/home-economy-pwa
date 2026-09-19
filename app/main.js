@@ -5,7 +5,7 @@ import { getView, putView, listQueue, putQueued, removeQueued } from './db.js';
 import { enqueue, drain } from './queue.js';
 import * as api from './api.js';
 import { currentAuth, refresh, signIn } from './auth.js';
-import { entryFrom, validateEntry, renderEntry, renderPending, renderRecent, renderConn, renderLedgers, nextRetryDelay } from './ui.js';
+import { entryFrom, validateEntry, renderEntry, renderPending, renderRecent, renderLog, renderConn, renderLedgers, nextRetryDelay } from './ui.js';
 
 // memoryStore()'s shape, over the real IndexedDB functions — queue.js and
 // this module don't need to know the difference.
@@ -25,6 +25,10 @@ let queue = [];
 // happen. Keeping that rule in one place beats repeating it in boot, sync,
 // switchLedger and onConnClick, everywhere `view` itself gets reassigned.
 let account = null;
+// The full log, when it is open instead of the home screen (spec §3.2):
+// { account, rows, hasMore, loading, error }, or null for home. One view at
+// a time — spec §3 has no router and needs none.
+let log = null;
 const conn = { online: navigator.onLine, syncing: false, at: null, error: '' };
 
 // navigator.onLine goes true the moment the OS sees an interface, which is
@@ -67,11 +71,15 @@ function render() {
     account = null;
   }
 
-  // conn travels too: when a sync fails, the form's own hint is where the
-  // reason belongs — that is the line someone reads when the button is dead.
-  renderEntry({ view, queue, conn }); // rebuilds #screen, including an empty pending slot
-  renderPending(queue, view ? view.ledger : ''); // fills that slot in, this book's entries only
-  renderRecent({ view, account, queue }); // the selected account's last-synced rows, plus its own pending ones
+  if (log) {
+    renderLog({ log, conn });
+  } else {
+    // conn travels too: when a sync fails, the form's own hint is where the
+    // reason belongs — that is the line someone reads when the button is dead.
+    renderEntry({ view, queue, conn }); // rebuilds #screen, including an empty pending slot
+    renderPending(queue, view ? view.ledger : ''); // fills that slot in, this book's entries only
+    renderRecent({ view, account, queue }); // the selected account's last-synced rows, plus its own pending ones
+  }
   renderConn(conn);
   renderLedgers({ view, conn }); // #ledger-select is fixed in index.html's topbar, like #conn
   // bootstrap.data.user is already on the wire (Code.gs's getBootstrap) and
@@ -156,8 +164,66 @@ function onScreenClick(event) {
     return;
   }
 
+  if (event.target.closest('#view-all')) { openLog(); return; }
+  if (event.target.closest('#log-back')) { closeLog(); return; }
+  if (event.target.closest('#log-more')) { loadMore(); return; }
+
   const acctRow = event.target.closest('[data-account]');
   if (acctRow) selectAccount(acctRow.dataset.account);
+}
+
+/** `View all` (spec §3.2). Online, page one comes from the server like every
+    other page. Offline, the cached bootstrap already holds this account's
+    newest rows with their balances — the same rows Recent shows — so those
+    stand in for page one, and renderLog says later pages need a connection. */
+function openLog() {
+  const acct = view && view.accounts.find((a) => a.name === account);
+  if (!acct) return;
+  if (navigator.onLine) {
+    log = { account: acct.name, rows: [], hasMore: true, loading: false, error: '' };
+    loadMore(); // renders, with the control already reading Loading…
+  } else {
+    // ponytail: bootstrap sends at most 20 rows per account (Ledger.gs's
+    // RECENT_LIMIT); fewer than that is the whole history. Change both if
+    // that limit ever moves.
+    log = { account: acct.name, rows: acct.txns, hasMore: acct.txns.length >= 20, loading: false, error: '' };
+    render();
+  }
+}
+
+function closeLog() {
+  log = null;
+  render();
+}
+
+/** Asks for the next page, at an offset of however many rows are already
+    shown — advancing by what arrived, not by the page size, so a short page
+    never skips rows. A failure keeps the rows already loaded and shows why;
+    the control turns into Retry for the same offset. */
+async function loadMore() {
+  if (!log || log.loading) return;
+  const current = log;
+  current.loading = true;
+  current.error = '';
+  render();
+  try {
+    const auth = await currentAuth();
+    const res = auth && auth.token
+      ? await api.call('entries', { ledger: view.ledger, account: current.account, offset: current.rows.length }, auth.token)
+      : { ok: false, kind: 'auth', error: 'Sign in again to see more entries.' };
+    if (res.ok) {
+      current.rows = current.rows.concat(res.data.rows);
+      current.hasMore = res.data.hasMore;
+    } else {
+      if (res.kind === 'auth') conn.needsAuth = true; // same signal sync() and switchLedger arm
+      current.error = res.error || 'Could not load more entries.';
+    }
+  } finally {
+    current.loading = false;
+    // Back was tapped while this was in flight: that page belongs to a log
+    // nobody is looking at any more, so it must not repaint over home.
+    if (log === current) render();
+  }
 }
 
 /** A tap (or Enter/Space — onScreenKeydown below) on a row in the balances
@@ -336,6 +402,7 @@ export async function switchLedger(name) {
     // Only ledger and accounts change; `ledgers` (the roster) and `user`
     // carry over from the last bootstrap.
     view = { ...view, ledger: res.data.ledger, accounts: res.data.accounts };
+    log = null; // the account it was showing belongs to the other book
     await putView('bootstrap', view); // survives a reload
     render();
   } finally {
@@ -400,8 +467,8 @@ export async function boot() {
   // not cached — leaving it live is the same lie as a status line
   // claiming a sync that never happened), not whenever the next unrelated
   // render happens to run.
-  window.addEventListener('online', () => { conn.online = true; clearRetry(); renderConn(conn); renderLedgers({ view, conn }); sync(); });
-  window.addEventListener('offline', () => { conn.online = false; clearRetry(); renderConn(conn); renderLedgers({ view, conn }); });
+  window.addEventListener('online', () => { conn.online = true; clearRetry(); renderConn(conn); renderLedgers({ view, conn }); if (log) render(); sync(); });
+  window.addEventListener('offline', () => { conn.online = false; clearRetry(); renderConn(conn); renderLedgers({ view, conn }); if (log) render(); });
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && navigator.onLine) sync();
   });

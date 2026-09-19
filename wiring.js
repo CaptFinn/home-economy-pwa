@@ -317,6 +317,31 @@ const { enqueue } = await import('./app/queue.js');
   assert.ok(!text.includes('700.00'), "Electricity's queued entry does not bleed into Groceries' Recent");
 }
 
+// ── the full log (spec §3.2) ──────────────────────────────────────────
+{
+  ui.renderLog({
+    log: {
+      account: 'Groceries',
+      rows: [{ row: 3, fp: 'x', date: '2026-09-16', account: 'Groceries',
+               source_recipient: 'SM', description: 'Groceries',
+               amount: -1699, balance: 301 }],
+      hasMore: true, loading: false, error: '',
+    },
+    conn: { online: true },
+  });
+  const text = textOf(document.getElementById('screen'));
+  assert.ok(text.includes('Groceries'), 'the account is named');
+  assert.ok(text.includes('1,699.00'), 'its rows are listed');
+  assert.ok(text.includes('Load 50 more'), 'and more can be asked for');
+
+  ui.renderLog({
+    log: { account: 'Groceries', rows: [], hasMore: true, loading: false, error: '' },
+    conn: { online: false },
+  });
+  assert.ok(textOf(document.getElementById('screen')).includes('offline'),
+    'offline, the log says what it cannot do rather than offering a dead button');
+}
+
 // ── main.js's actual wiring: the submit handler and a failed sync ─────
 // Everything above exercises ui.js's pure and DOM-drawing halves directly.
 // Two of stage 1's three shipped bugs — the client-signed amount, and the
@@ -451,6 +476,42 @@ const { enqueue } = await import('./app/queue.js');
     document.getElementById('screen').dispatch('keydown', { target: groceriesRow, key: 'Enter' });
     const afterKey = textOf(document.getElementById('screen'));
     assert.ok(afterKey.includes('Rice'), 'Enter on a balances row selects it too, not just a click');
+  }
+
+  // ── the full log through main.js: View all, a page, a failed page, the
+  // retry, Back (spec §3.2) ───────────────────────────────────────────────
+  {
+    const sent = [];
+    const answer = (body) => async (url, req) => {
+      sent.push(JSON.parse(req.body));
+      return { text: async () => JSON.stringify(body) };
+    };
+    const logRow = (n) => ({ row: n, fp: 'l' + n, date: '2026-08-01', account: 'Groceries',
+                             source_recipient: 'Old shop ' + n, description: '', amount: -1, balance: 1 });
+    const screen = document.getElementById('screen');
+
+    fetchImpl = answer({ ok: true, data: { rows: [logRow(90)], hasMore: true } });
+    screen.dispatch('click', { target: find(screen, (el) => el.id === 'view-all') });
+    await settle();
+    assert.deepEqual(sent.map((b) => [b.op, b.args.account, b.args.offset]), [['entries', 'Groceries', 0]],
+      'View all asks for page one of the selected account');
+    assert.ok(textOf(screen).includes('Old shop 90'), 'and shows what came back');
+
+    fetchImpl = answer({ ok: false, error: 'The sheet is busy right now. Try again in a moment.', kind: 'server' });
+    screen.dispatch('click', { target: find(screen, (el) => el.id === 'log-more') });
+    await settle();
+    assert.ok(textOf(screen).includes('busy right now'), 'a failed page says why');
+    assert.ok(textOf(screen).includes('Old shop 90'), 'and leaves the rows already loaded alone');
+
+    fetchImpl = answer({ ok: true, data: { rows: [logRow(89)], hasMore: false } });
+    screen.dispatch('click', { target: find(screen, (el) => el.id === 'log-more') });
+    await settle();
+    assert.equal(sent[2].args.offset, 1, 'the retry asks for the offset after what is shown, not past it');
+    assert.ok(textOf(screen).includes('Old shop 89'), 'the next page is appended');
+    assert.ok(!find(screen, (el) => el.id === 'log-more'), 'and no more is offered once hasMore is false');
+
+    screen.dispatch('click', { target: find(screen, (el) => el.id === 'log-back') });
+    assert.ok(find(screen, (el) => el.id === 'entry-form'), 'Back returns home');
   }
 
   // ── the stage 1 Critical, through the actual submit handler ──────────

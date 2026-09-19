@@ -83,9 +83,20 @@ export function directedAmount(entry) {
     reviewed and frozen). The queue actually holds addEntry items in the
     unsigned+direction wire shape above, so this maps a local, throwaway
     copy — never written back to the store — to a signed amount just for
-    that one arithmetic call. */
-export function pendingBalance(queue, account) {
-  const signedQueue = queue.map((item) => (item.op !== 'addEntry' ? item : {
+    that one arithmetic call.
+
+    The `ledger` filter belongs here, on the caller's side, not in
+    pendingFor itself: pendingFor matches by account name only, and every
+    queued entry already carries `entry.ledger` (entryFrom, above) — but
+    widening pendingFor's own signature would break queue.js's frozen
+    selfcheck fixtures for nothing. Two books can share an account name
+    (e.g. both have a "Groceries"), and the switcher (this stage) is what
+    first makes `view.ledger` change under a queue that still holds another
+    book's unsent entries — without this filter, an unsent Bills entry
+    would leak into Account 1's balance the moment someone switches books. */
+export function pendingBalance(queue, account, ledger) {
+  const forLedger = queue.filter((item) => item.op !== 'addEntry' || item.args.entry.ledger === ledger);
+  const signedQueue = forLedger.map((item) => (item.op !== 'addEntry' ? item : {
     ...item,
     args: { ...item.args, entry: { ...item.args.entry, amount: directedAmount(item.args.entry) } },
   }));
@@ -155,7 +166,7 @@ export function renderEntry(state) {
       right.className = 'txn-right';
       const amt = document.createElement('div');
       amt.className = 'txn-amount fig';
-      const pending = pendingBalance(queue, a.name);
+      const pending = pendingBalance(queue, a.name, view.ledger);
       amt.textContent = peso(a.balance + pending);
       right.appendChild(amt);
       // Only when something is actually queued for THIS account (round-2
@@ -252,8 +263,14 @@ export function renderEntry(state) {
     parked one — the server rejected it, or it's stale — stays full-strength
     and shows its error, since that's the one that needs a person to look at
     it. Both carry a delete control, wired up by main.js via the
-    data-remove-id attribute (this module never touches the store). */
-export function renderPending(queue) {
+    data-remove-id attribute (this module never touches the store).
+
+    `ledger` filters the list to the book currently on screen — same reason
+    as pendingBalance's own filter above: the queue can hold unsent entries
+    for a book the switcher has since moved away from, and listing them
+    under the wrong book's accounts is the same leak, just for the list
+    instead of the sum. */
+export function renderPending(queue, ledger) {
   const screen = document.getElementById('screen');
   let slot = document.getElementById('pending-list');
   if (!slot) {
@@ -263,7 +280,9 @@ export function renderPending(queue) {
   }
   slot.textContent = '';
 
-  const items = queue.filter((i) => i.op === 'addEntry').slice().reverse(); // newest first
+  const items = queue
+    .filter((i) => i.op === 'addEntry' && i.args.entry.ledger === ledger)
+    .slice().reverse(); // newest first
   items.forEach((item) => {
     const e = item.args.entry;
     const row = document.createElement('div');

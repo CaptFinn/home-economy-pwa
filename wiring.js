@@ -226,6 +226,27 @@ const { enqueue } = await import('./app/queue.js');
   assert.ok(text3.includes('pending'), 'and marked pending');
 }
 
+// ── the cross-ledger leak (fix round 1, item 1 — CRITICAL): an unsent
+// entry queued for one book must not bleed into another book's balance or
+// list just because two books happen to share an account name ───────────
+{
+  byId.delete('pending-list');
+  const queue = [
+    { id: 'q1', op: 'addEntry', state: 'pending',
+      args: { entry: { ledger: 'Bills', account: 'Groceries', amount: 40, direction: 'out' } } },
+    { id: 'q2', op: 'addEntry', state: 'pending',
+      args: { entry: { ledger: 'Account 1', account: 'Groceries', amount: 999, direction: 'out' } } },
+  ];
+  assert.equal(ui.pendingBalance(queue, 'Groceries', 'Bills'), -40,
+    "only Bills' own unsent entry counts toward Bills' Groceries balance");
+  assert.equal(ui.pendingBalance(queue, 'Groceries', 'Account 1'), -999,
+    "and Account 1 sees only its own 999, not Bills' 40");
+
+  ui.renderPending(queue, 'Bills');
+  const text4 = textOf(document.getElementById('screen'));
+  assert.ok(!text4.includes('999.00'), "Account 1's queued entry is not listed while Bills is on screen");
+}
+
 // ── main.js's actual wiring: the submit handler and a failed sync ─────
 // Everything above exercises ui.js's pure and DOM-drawing halves directly.
 // Two of stage 1's three shipped bugs — the client-signed amount, and the
@@ -308,7 +329,10 @@ const { enqueue } = await import('./app/queue.js');
   // script waiting for a tap that can never come under node.
   await db.putAuth({ email: 'vin@example.test', token: 'tok-1' });
   const bootstrapView = {
-    user: 'vin', ledger: 'Bills', ledgers: ['Bills'],
+    // Two ledgers (not one) so the switcher boot() renders is actually
+    // enabled — the switchLedger scenario further down needs a live
+    // control to dispatch `change` against.
+    user: 'vin', ledger: 'Bills', ledgers: ['Bills', 'Account 1'],
     accounts: [{ name: 'Groceries', balance: 300, txns: [] }],
   };
   await db.putView('bootstrap', bootstrapView);
@@ -363,6 +387,71 @@ const { enqueue } = await import('./app/queue.js');
   await main.sync();
   assert.doesNotMatch(document.getElementById('conn').textContent, /^synced/,
     'a lost session must not read as a sync that happened');
+
+  // ── switchLedger, through the actual `change` event (fix round 1, item
+  // 2) ───────────────────────────────────────────────────────────────────
+  // Everything above drives ui.renderLedgers directly; nothing yet has ever
+  // dispatched a real `change` on #ledger-select, so main.js's own handler
+  // — the one property this task exists to guarantee — had no coverage at
+  // all. Restoring a session first: the scenario just above deliberately
+  // erased it, and this exercises the signed-in tap, not the signed-out one.
+  await db.putAuth({ email: 'vin@example.test', token: 'tok-1' });
+
+  const ledgerSelect = document.getElementById('ledger-select');
+  assert.equal(ledgerSelect.value, 'Bills', 'boot rendered the switcher on the seeded ledger');
+
+  // A rejected switch: the select must snap back to the book actually
+  // active, not sit on the one the person tapped — main.js's own `finally`
+  // is what has to do that, not this test.
+  fetchImpl = fetchReturning({ ok: false, error: 'Pick a ledger.', kind: 'validation' });
+  ledgerSelect.value = 'Account 1'; // what a real <select> already shows the instant `change` fires
+  ledgerSelect.dispatch('change');
+  // Fix round 1, item 4: the guard at the top of switchLedger runs
+  // synchronously, before its first `await` — so it's already in effect
+  // the instant dispatch() returns, ahead of letting the round trip settle.
+  // A second tap landing in this window must not start a concurrent switch.
+  assert.equal(ledgerSelect.disabled, true,
+    'the select is disabled for the round trip, not just after it fails or succeeds');
+  await settle();
+  assert.equal(ledgerSelect.value, 'Bills',
+    'a rejected switch restores the select to the ledger actually active');
+  assert.equal(ledgerSelect.disabled, false, 'and lifts the guard once it is done');
+
+  // A successful switch: read the MERGED view back from the store it
+  // claims to survive a reload in, not just main.js's in-memory `view` —
+  // an assertion on the in-memory object alone would still pass if the
+  // putView call were deleted. It also has to clear conn.needsAuth (fix
+  // round 1, item 3's other half): the carried-item scenario above
+  // deliberately left it stuck true, and the auth-kind scenario further
+  // below only proves anything if this success first brings it back to
+  // false on its own.
+  fetchImpl = fetchReturning({
+    ok: true,
+    data: { ledger: 'Account 1', accounts: [{ name: 'Cash', balance: 50, txns: [] }] },
+  });
+  ledgerSelect.value = 'Account 1';
+  ledgerSelect.dispatch('change');
+  await settle();
+
+  const stored = await db.getView('bootstrap');
+  assert.equal(stored.ledger, 'Account 1', 'the switch reached the views store, not just memory');
+  assert.equal(stored.accounts[0].name, 'Cash', "with the new book's own accounts");
+  assert.notEqual(document.getElementById('conn').textContent, 'sign in again',
+    'a real success clears a needsAuth left over from an earlier rejected switch');
+
+  // A token the server itself rejects mid-switch (fix round 1, item 3):
+  // distinct from a plain validation failure — sync()'s own auth-kind
+  // handling is the model this follows, so the tap-to-sign-in affordance
+  // gets armed right away instead of waiting for some later sync to notice.
+  // The success just above is what proves conn.needsAuth starts this
+  // scenario false, so the line below can only read 'sign in again' if
+  // THIS switch is what set it.
+  fetchImpl = fetchReturning({ ok: false, error: 'Sign in again to continue.', kind: 'auth' });
+  ledgerSelect.value = 'Bills';
+  ledgerSelect.dispatch('change');
+  await settle();
+  assert.equal(document.getElementById('conn').textContent, 'sign in again',
+    'a token the server rejects mid-switch arms the sign-in affordance immediately');
 }
 
 // ── the ledger switcher (spec §4) ─────────────────────────────────────

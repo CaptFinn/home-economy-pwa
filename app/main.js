@@ -52,7 +52,7 @@ function render() {
   // conn travels too: when a sync fails, the form's own hint is where the
   // reason belongs — that is the line someone reads when the button is dead.
   renderEntry({ view, queue, conn }); // rebuilds #screen, including an empty pending slot
-  renderPending(queue); // fills that slot in
+  renderPending(queue, view ? view.ledger : ''); // fills that slot in, this book's entries only
   renderConn(conn);
   renderLedgers({ view, conn }); // #ledger-select is fixed in index.html's topbar, like #conn
   // bootstrap.data.user is already on the wire (Code.gs's getBootstrap) and
@@ -250,28 +250,58 @@ export async function sync() {
     session; there's no need to repeat sync()'s refresh()-then-fallback
     dance for it. */
 export async function switchLedger(name) {
-  const auth = await currentAuth();
-  if (!auth || !auth.token) {
-    renderLedgers({ view, conn }); // restores the select to the current ledger
-    hint('Sign in again to switch ledgers.');
-    return;
-  }
+  // The native <select> already shows the tapped option the moment `change`
+  // fires, before this round trip even starts, and the balances below still
+  // belong to the OLD book for as long as the request is in flight — so the
+  // control is disabled for the duration, both to stop a second tap from
+  // racing this one and so nothing on screen claims a book that hasn't
+  // actually loaded yet. The `finally` below is the one place that lifts
+  // it again, on every exit from this function alike (success, a rejected
+  // switch, or an unexpected throw) — so it never gets stuck disabled.
+  const select = document.getElementById('ledger-select');
+  if (select) select.disabled = true;
 
-  const res = await api.call('ledger', { ledger: name }, auth.token);
-  if (!res.ok) {
-    // The native <select> already shows the tapped option the moment
-    // `change` fires, before this round trip even starts — a failure here
-    // must put it back, never leave it claiming a book the server refused.
+  try {
+    const auth = await currentAuth();
+    if (!auth || !auth.token) {
+      hint('Sign in again to switch ledgers.');
+      return;
+    }
+
+    const res = await api.call('ledger', { ledger: name }, auth.token);
+    if (!res.ok) {
+      if (res.kind === 'auth') {
+        // Same signal sync() reacts to (round-2 review parity): the server
+        // itself rejected the token. Without this the connection line kept
+        // reading whatever the last successful sync left it as — "synced
+        // HH:MM" — with the tap-to-sign-in affordance unarmed until some
+        // later sync happened to run and notice on its own.
+        conn.needsAuth = true;
+        renderConn(conn);
+      }
+      hint(res.error || 'Could not switch ledgers.');
+      return;
+    }
+
+    // A real success is proof the token IS good — mirrors sync()'s own
+    // "only a real success may move the clock" rule: without clearing this,
+    // a switch that succeeds right after an earlier one got rejected for
+    // 'auth' would still leave the connection line reading "sign in again".
+    conn.needsAuth = false;
+
+    // Only ledger and accounts change; `ledgers` (the roster) and `user`
+    // carry over from the last bootstrap.
+    view = { ...view, ledger: res.data.ledger, accounts: res.data.accounts };
+    await putView('bootstrap', view); // survives a reload
+    render();
+  } finally {
+    // Restores the select to whatever ledger is ACTUALLY active (the old
+    // one on failure, the new one on success — render() above already
+    // updated `view` first) and lifts the disable from the top of this
+    // function. Never skipped, so a failed switch never leaves the control
+    // claiming a book it did not reach.
     renderLedgers({ view, conn });
-    hint(res.error || 'Could not switch ledgers.');
-    return;
   }
-
-  // Only ledger and accounts change; `ledgers` (the roster) and `user`
-  // carry over from the last bootstrap.
-  view = { ...view, ledger: res.data.ledger, accounts: res.data.accounts };
-  await putView('bootstrap', view); // survives a reload
-  render();
 }
 
 export async function boot() {

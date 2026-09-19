@@ -109,6 +109,11 @@ body {
   background-size: 4px 4px, 4px 4px;
   background-repeat: no-repeat;
 }
+/* Fix round 1: appearance:none plus this rule's own explicit color/
+   background above outrank the UA's disabled styling, so without this a
+   dead control (offline, or nothing to switch between) still looked
+   perfectly tappable — same pattern as .submit:disabled below. */
+.ledger-select:disabled { opacity: 0.4; }
 
 /* ── entry form ─────────────────────────────────────── */
 

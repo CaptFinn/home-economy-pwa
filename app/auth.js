@@ -59,9 +59,26 @@ async function storeCredential(response) {
   return auth;
 }
 
+// True for as long as a signIn() is waiting on the person (spec §7.1).
+// google.accounts.id.initialize is global: a refresh() started meanwhile —
+// a sync fired by `online`, visibilitychange, a retry timer — would call it
+// again and replace the callback signIn() is waiting on, so the sign-in
+// would never settle. A silent refresh is never worth breaking an explicit
+// sign-in, so refresh() stands aside while this is set.
+let signingIn = false;
+
 /** Renders Google's button into #screen and resolves once the person signs
     in, with the auth already saved to IndexedDB. */
 export async function signIn() {
+  signingIn = true;
+  try {
+    return await promptSignIn();
+  } finally {
+    signingIn = false;
+  }
+}
+
+async function promptSignIn() {
   await whenGoogleReady();
   return new Promise((resolve, reject) => {
     google.accounts.id.initialize({
@@ -103,7 +120,7 @@ export async function currentAuth() {
 const REFRESH_TIMEOUT_MS = 4000;
 
 export async function refresh() {
-  if (!navigator.onLine) return null;
+  if (!navigator.onLine || signingIn) return null;
   try {
     await whenGoogleReady();
     return await new Promise((resolve) => {

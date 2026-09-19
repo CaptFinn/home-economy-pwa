@@ -89,7 +89,8 @@ function render() {
     // reason belongs — that is the line someone reads when the button is dead.
     renderEntry({ view, queue, conn, editing, voidArmed }); // rebuilds #screen, including an empty pending slot
     if (draft) fillForm(draft);
-    renderPending(queue, view ? view.ledger : ''); // fills that slot in, this book's entries only
+    // Fills that slot in: this book's items only, minus what Recent already says.
+    renderPending(queue, view ? view.ledger : '', view && view.accounts.find((a) => a.name === account));
     renderRecent({ view, account, queue, editing }); // the selected account's last-synced rows, plus its own pending ones
   }
   renderConn(conn);

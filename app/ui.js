@@ -314,6 +314,11 @@ function ledgerOf(item) {
   return item.args.ledger || (item.args.entry && item.args.entry.ledger);
 }
 
+function shownInRecent(item, acct) {
+  if (item.op === 'addEntry') return item.args.entry.account === acct.name;
+  return item.state === 'pending' && acct.txns.some((t) => t.row === item.args.row);
+}
+
 /** One row for a still-queued addEntry — pulled out so renderPending (the
     ledger-wide list above the form) and renderRecent (below; the same rows,
     filtered one step further to a single account) draw the exact same
@@ -381,8 +386,15 @@ function pendingRow(item) {
     as pendingBalance's own filter above: the queue can hold unsent entries
     for a book the switcher has since moved away from, and listing them
     under the wrong book's accounts is the same leak, just for the list
-    instead of the sum. */
-export function renderPending(queue, ledger) {
+    instead of the sum.
+
+    `recent` (the account Recent is showing, when there is one) drops what
+    is already said further down (spec §7.3): that account's own unsent
+    entries are listed in Recent, and a pending edit or void against one of
+    its rows is marked on the row itself. A refused edit or void stays here
+    even then — its message and its Reopen/Discard live on this list, not on
+    the row. */
+export function renderPending(queue, ledger, recent) {
   const screen = document.getElementById('screen');
   let slot = document.getElementById('pending-list');
   if (!slot) {
@@ -393,7 +405,7 @@ export function renderPending(queue, ledger) {
   slot.textContent = '';
 
   queue
-    .filter((i) => ledgerOf(i) === ledger)
+    .filter((i) => ledgerOf(i) === ledger && !(recent && shownInRecent(i, recent)))
     .slice().reverse() // newest first
     .forEach((item) => slot.appendChild(pendingRow(item)));
 }

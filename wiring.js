@@ -387,6 +387,33 @@ const { enqueue } = await import('./app/queue.js');
     'the row itself says an edit or void is waiting, not only the pending list');
 }
 
+// ── each queued item is said once, where it belongs (spec §7.3) ───────
+{
+  const groceries = { name: 'Groceries', balance: 300, txns: [
+    { row: 1, fp: 'g1', date: '2026-09-15', account: 'Groceries',
+      source_recipient: 'SM', description: 'Rice', amount: -200, balance: 300 }] };
+  const view = { ledger: 'Bills', ledgers: ['Bills'],
+                 accounts: [groceries, { name: 'Electricity', balance: 500, txns: [] }] };
+  const add = (id, account, amount) => ({ id, op: 'addEntry', state: 'pending',
+    args: { entry: { ledger: 'Bills', account, amount, direction: 'out' } } });
+  const queue = [
+    add('a1', 'Groceries', 11), add('a2', 'Electricity', 22),
+    { id: 'u1', op: 'updateEntry', state: 'pending',
+      args: { ledger: 'Bills', row: 1, fp: 'g1', entry: { ledger: 'Bills', account: 'Groceries', amount: 33, direction: 'out' } } },
+    { id: 'v9', op: 'voidEntry', state: 'pending', args: { ledger: 'Bills', row: 99, fp: 'x', label: 'Old rent' } },
+  ];
+  ui.renderEntry({ view, queue, conn: { online: true } });
+  ui.renderPending(queue, 'Bills', groceries);
+  ui.renderRecent({ view, account: 'Groceries', queue });
+  const text = textOf(document.getElementById('screen'));
+  const count = (s) => text.split(s).length - 1;
+  assert.equal(count('11.00'), 1, "the selected account's unsent entry shows once, in Recent");
+  assert.equal(count('22.00'), 1, "another account's still shows, in the list above the form");
+  assert.equal(count('edit pending'), 1, 'an edit to a row on screen is marked on that row only');
+  assert.ok(text.includes('Old rent'), 'a void against a row not on screen stays in the list');
+  assert.ok(text.includes('includes pending'), 'and the balance note stays: it explains a figure');
+}
+
 // ── main.js's actual wiring: the submit handler and a failed sync ─────
 // Everything above exercises ui.js's pure and DOM-drawing halves directly.
 // Two of stage 1's three shipped bugs — the client-signed amount, and the
@@ -762,6 +789,22 @@ const { enqueue } = await import('./app/queue.js');
     assert.ok(textOf(screen).includes('Edit entry'), 'and opens the row in the form');
     assert.equal(document.getElementById('f-amount').value, '250', 'with the fresh data, not the refused edit');
     screen.dispatch('click', { target: find(screen, (el) => el.id === 'edit-cancel') });
+    navigator.onLine = false;
+  }
+
+  // ── a silent refresh must not steal a waiting sign-in's callback (spec
+  // §7.1). Last in this block: the sign-in below waits on a tap that never
+  // comes under node, so it is left pending on purpose. ───────────────────
+  {
+    const auth = await import('./app/auth.js');
+    let inits = 0;
+    fakeGoogle.accounts.id.initialize = () => { inits += 1; };
+    navigator.onLine = true;
+    auth.signIn();
+    await settle();
+    assert.equal(inits, 1, 'precondition: the sign-in has initialised Google and is waiting');
+    assert.equal(await auth.refresh(), null, 'a refresh during sign-in stands aside');
+    assert.equal(inits, 1, 'without re-initialising Google over the sign-in\'s callback');
     navigator.onLine = false;
   }
 }

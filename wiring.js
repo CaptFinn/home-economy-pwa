@@ -4,12 +4,20 @@
 // above all an entry that reaches the queue in the wrong shape.
 import assert from 'node:assert/strict';
 
-// Matches one simple CSS selector — a single class, id, or tag name; no
-// combinators, attribute selectors or pseudo-classes. That is the entire
-// vocabulary main.js and ui.js reach for (`.submit`, nothing else so far).
+// Matches one simple CSS selector — a class, an id, a tag name, or a bare
+// `[data-x]` presence check; no combinators or pseudo-classes. The last form
+// is what onScreenClick's own `.closest('[data-remove-id]')` (and, this
+// task, `[data-account]`) needs — main.js already reached for it before this
+// stub could answer it, so this is closing a gap the harness had, not adding
+// one main.js doesn't use.
 function matchesSelector(el, sel) {
   if (sel[0] === '.') return String(el.className || '').split(/\s+/).includes(sel.slice(1));
   if (sel[0] === '#') return el.id === sel.slice(1);
+  const attr = /^\[data-([a-z-]+)\]$/.exec(sel);
+  if (attr) {
+    const key = attr[1].replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+    return el.dataset ? el.dataset[key] !== undefined : false;
+  }
   return el.tagName === sel.toUpperCase();
 }
 
@@ -48,15 +56,30 @@ export function makeDom() {
       disabled: false,
       hidden: false,
       listeners: {},
-      appendChild(child) { this.children.push(child); return child; },
+      appendChild(child) { child.parent = this; this.children.push(child); return child; },
       // Mirrors real DOM's insertBefore(node, null): appends. A reference
       // node not found in `children` also falls back to append rather than
       // throwing (a real DOM throws) — looser, but nothing here ever passes
       // a stray reference, and honest logging isn't worth the extra code.
       insertBefore(child, ref) {
+        child.parent = this;
         const i = ref == null ? -1 : this.children.indexOf(ref);
         if (i === -1) this.children.push(child); else this.children.splice(i, 0, child);
         return child;
+      },
+      // Real Element.closest: this element, then each ancestor in turn,
+      // until one matches or the tree runs out. Needed the moment a click's
+      // `target` is a nested child (a title, an arrow) rather than the row
+      // itself — the common case for a real tap, and the one thing a test
+      // that always dispatches straight on the row would never catch going
+      // missing.
+      closest(sel) {
+        let el = this;
+        while (el) {
+          if (matchesSelector(el, sel)) return el;
+          el = el.parent || null;
+        }
+        return null;
       },
       setAttribute(k, v) { this.attributes[k] = String(v); if (k === 'id') byId.set(String(v), this); },
       getAttribute(k) { return k in this.attributes ? this.attributes[k] : null; },
@@ -247,6 +270,53 @@ const { enqueue } = await import('./app/queue.js');
   assert.ok(!text4.includes('999.00'), "Account 1's queued entry is not listed while Bills is on screen");
 }
 
+// ── recent entries (spec §3.1) ────────────────────────────────────────
+{
+  const view = {
+    ledger: 'Bills',
+    ledgers: ['Bills'],
+    accounts: [{
+      name: 'Joint Wallet', balance: 1840,
+      txns: [
+        { row: 12, fp: 'a', date: '2026-09-17', account: 'Joint Wallet',
+          source_recipient: 'Food', description: 'Beef loaf and eggs',
+          amount: -60, balance: 1840 },
+        { row: 11, fp: 'b', date: '2026-09-16', account: 'Joint Wallet',
+          source_recipient: 'Salary', description: '', amount: 1955, balance: 1900 },
+      ],
+    }],
+  };
+  ui.renderRecent({ view, account: 'Joint Wallet', queue: [] });
+  const text = textOf(document.getElementById('screen'));
+  assert.ok(text.includes('Beef loaf and eggs'), 'the description is the title when there is one');
+  assert.ok(text.includes('Salary'), 'and the source stands in when there is not');
+  assert.ok(text.includes('60.00') && text.includes('1,955.00'), 'both amounts are shown');
+  assert.ok(text.includes('sep 17'), 'dates read like the Apps Script app');
+}
+
+// ── Recent's own pending rows are per-account, not per-ledger (unlike the
+// list above the form) — reusing pendingRow's markup, filtered one step
+// further, per spec §3.1's "queued entries appear above them" ───────────
+{
+  const view = {
+    ledger: 'Bills', ledgers: ['Bills'],
+    accounts: [
+      { name: 'Groceries', balance: 300, txns: [] },
+      { name: 'Electricity', balance: 1500, txns: [] },
+    ],
+  };
+  const queue = [
+    { id: 'q1', op: 'addEntry', state: 'pending',
+      args: { entry: { ledger: 'Bills', account: 'Groceries', amount: 40, direction: 'out' } } },
+    { id: 'q2', op: 'addEntry', state: 'pending',
+      args: { entry: { ledger: 'Bills', account: 'Electricity', amount: 700, direction: 'out' } } },
+  ];
+  ui.renderRecent({ view, account: 'Groceries', queue });
+  const text = textOf(document.getElementById('screen'));
+  assert.ok(text.includes('pending'), "Groceries' own queued entry shows, marked pending");
+  assert.ok(!text.includes('700.00'), "Electricity's queued entry does not bleed into Groceries' Recent");
+}
+
 // ── main.js's actual wiring: the submit handler and a failed sync ─────
 // Everything above exercises ui.js's pure and DOM-drawing halves directly.
 // Two of stage 1's three shipped bugs — the client-signed amount, and the
@@ -333,7 +403,17 @@ const { enqueue } = await import('./app/queue.js');
     // enabled — the switchLedger scenario further down needs a live
     // control to dispatch `change` against.
     user: 'vin', ledger: 'Bills', ledgers: ['Bills', 'Account 1'],
-    accounts: [{ name: 'Groceries', balance: 300, txns: [] }],
+    // Two accounts, each with one recent row of its own — the recent-entries
+    // scenario just below needs a second account to tap into, and content
+    // in each that only shows up if Recent is actually reading the right one.
+    accounts: [
+      { name: 'Groceries', balance: 300,
+        txns: [{ row: 1, fp: 'g1', date: '2026-09-15', account: 'Groceries',
+                 source_recipient: 'SM', description: 'Rice', amount: -200, balance: 300 }] },
+      { name: 'Electricity', balance: 500,
+        txns: [{ row: 2, fp: 'e1', date: '2026-09-14', account: 'Electricity',
+                 source_recipient: 'Meralco', description: '', amount: -500, balance: 500 }] },
+    ],
   };
   await db.putView('bootstrap', bootstrapView);
   fetchImpl = fetchReturning({ ok: true, data: bootstrapView }); // answers boot()'s own background sync()
@@ -343,6 +423,35 @@ const { enqueue } = await import('./app/queue.js');
 
   assert.match(document.getElementById('conn').textContent, /^synced \d{2}:\d{2}$/,
     'boot wired a real, successful sync before either scenario below touches it');
+
+  // ── Recent defaults to the first account, and a real tap (or Enter) on a
+  // balances-list row switches it — through main.js's actual listeners, not
+  // ui.renderRecent called directly (that is the block above this one) ────
+  {
+    const bootedText = textOf(document.getElementById('screen'));
+    assert.ok(bootedText.includes('Rice'), 'the first account is selected on boot, before any tap');
+    assert.ok(!bootedText.includes('Meralco'), 'and only its own recent row shows');
+
+    // A click's `target` is often a nested child, not the row itself — this
+    // dispatches on the title inside the Electricity row, the way a real tap
+    // would, so the assertion also covers closest() actually walking up to
+    // the ancestor that carries data-account, not just matching on itself.
+    const electricityRow = find(document.getElementById('screen'), (el) => el.dataset.account === 'Electricity');
+    assert.ok(electricityRow, 'the balances list marks each row with the account it belongs to');
+    const electricityTitle = electricityRow.querySelector('.txn-title');
+    document.getElementById('screen').dispatch('click', { target: electricityTitle });
+
+    const afterClick = textOf(document.getElementById('screen'));
+    assert.ok(afterClick.includes('Meralco'), 'tapping a balances row switches Recent to that account');
+    assert.ok(!afterClick.includes('Rice'), 'and the previous account no longer shows');
+
+    // Back to Groceries, this time by keyboard — the row is a div, not a
+    // button, so Enter has to be wired up on purpose rather than arriving free.
+    const groceriesRow = find(document.getElementById('screen'), (el) => el.dataset.account === 'Groceries');
+    document.getElementById('screen').dispatch('keydown', { target: groceriesRow, key: 'Enter' });
+    const afterKey = textOf(document.getElementById('screen'));
+    assert.ok(afterKey.includes('Rice'), 'Enter on a balances row selects it too, not just a click');
+  }
 
   // ── the stage 1 Critical, through the actual submit handler ──────────
   document.getElementById('f-date').value = '2026-09-19';
@@ -425,6 +534,14 @@ const { enqueue } = await import('./app/queue.js');
   // deliberately left it stuck true, and the auth-kind scenario further
   // below only proves anything if this success first brings it back to
   // false on its own.
+  // Precondition, not guessed: this assertion only proves the success below
+  // cleared needsAuth if needsAuth was actually still true walking in — the
+  // rejected-switch scenario just above never touches it (its kind is
+  // 'validation', not 'auth'), so it is still standing from the lost-session
+  // block much further up. Without checking that here, an unrelated change
+  // that leaves needsAuth false the whole time would pass this block too.
+  assert.equal(document.getElementById('conn').textContent, 'sign in again',
+    'precondition: this scenario starts with needsAuth still true from the earlier lost session');
   fetchImpl = fetchReturning({
     ok: true,
     data: { ledger: 'Account 1', accounts: [{ name: 'Cash', balance: 50, txns: [] }] },
@@ -446,6 +563,8 @@ const { enqueue } = await import('./app/queue.js');
   // The success just above is what proves conn.needsAuth starts this
   // scenario false, so the line below can only read 'sign in again' if
   // THIS switch is what set it.
+  assert.notEqual(document.getElementById('conn').textContent, 'sign in again',
+    'precondition: this scenario starts with needsAuth already cleared');
   fetchImpl = fetchReturning({ ok: false, error: 'Sign in again to continue.', kind: 'auth' });
   ledgerSelect.value = 'Bills';
   ledgerSelect.dispatch('change');

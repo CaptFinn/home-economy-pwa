@@ -5,7 +5,7 @@ import { getView, putView, listQueue, putQueued, removeQueued } from './db.js';
 import { enqueue, drain } from './queue.js';
 import * as api from './api.js';
 import { currentAuth, refresh, signIn } from './auth.js';
-import { entryFrom, validateEntry, renderEntry, renderPending, renderConn, renderLedgers, nextRetryDelay } from './ui.js';
+import { entryFrom, validateEntry, renderEntry, renderPending, renderRecent, renderConn, renderLedgers, nextRetryDelay } from './ui.js';
 
 // memoryStore()'s shape, over the real IndexedDB functions — queue.js and
 // this module don't need to know the difference.
@@ -18,6 +18,13 @@ const store = {
 // the offline write queue; `conn` is what renderConn/connLabel show.
 let view = null;
 let queue = [];
+// The account Recent currently shows. render() (below) is the one place
+// that keeps it valid: it defaults to the ledger's first account the
+// moment there is no selection yet, or the selection no longer exists in
+// this ledger — switching ledgers being the one thing that can make that
+// happen. Keeping that rule in one place beats repeating it in boot, sync,
+// switchLedger and onConnClick, everywhere `view` itself gets reassigned.
+let account = null;
 const conn = { online: navigator.onLine, syncing: false, at: null, error: '' };
 
 // navigator.onLine goes true the moment the OS sees an interface, which is
@@ -49,10 +56,22 @@ function scheduleRetry() {
 }
 
 function render() {
+  // Resolved here, not at every call site that reassigns `view`: see
+  // `account`'s own comment above for why this is the one place that rule
+  // has to live.
+  if (view && view.accounts.length) {
+    if (!account || !view.accounts.some((a) => a.name === account)) {
+      account = view.accounts[0].name; // spec §3.1: the first account is selected by default
+    }
+  } else {
+    account = null;
+  }
+
   // conn travels too: when a sync fails, the form's own hint is where the
   // reason belongs — that is the line someone reads when the button is dead.
   renderEntry({ view, queue, conn }); // rebuilds #screen, including an empty pending slot
   renderPending(queue, view ? view.ledger : ''); // fills that slot in, this book's entries only
+  renderRecent({ view, account, queue }); // the selected account's last-synced rows, plus its own pending ones
   renderConn(conn);
   renderLedgers({ view, conn }); // #ledger-select is fixed in index.html's topbar, like #conn
   // bootstrap.data.user is already on the wire (Code.gs's getBootstrap) and
@@ -129,11 +148,36 @@ async function onSubmit(event) {
 
 function onScreenClick(event) {
   const button = event.target.closest('[data-remove-id]');
-  if (!button) return;
-  removeQueued(button.dataset.removeId).then(async () => {
-    queue = await store.listQueue();
-    render();
-  });
+  if (button) {
+    removeQueued(button.dataset.removeId).then(async () => {
+      queue = await store.listQueue();
+      render();
+    });
+    return;
+  }
+
+  const acctRow = event.target.closest('[data-account]');
+  if (acctRow) selectAccount(acctRow.dataset.account);
+}
+
+/** A tap (or Enter/Space — onScreenKeydown below) on a row in the balances
+    list. Nothing here talks to the server, so unlike the branch above,
+    there is nothing to await: just a new account in state and a re-render. */
+function selectAccount(name) {
+  account = name;
+  render();
+}
+
+/** The keyboard equivalent of onScreenClick's account-row branch — the row
+    is a div, not a button, so it gets its own Enter/Space handling rather
+    than one for free (same reason the sibling app's tappable rows carry an
+    onkeydown of their own). */
+function onScreenKeydown(event) {
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  const acctRow = event.target.closest('[data-account]');
+  if (!acctRow) return;
+  event.preventDefault();
+  selectAccount(acctRow.dataset.account);
 }
 
 /** A tap on the connection line. When the server has rejected the token
@@ -348,6 +392,7 @@ export async function boot() {
     if (e.target.id === 'entry-form') onSubmit(e);
   });
   document.getElementById('screen').addEventListener('click', onScreenClick);
+  document.getElementById('screen').addEventListener('keydown', onScreenKeydown);
   document.getElementById('conn').addEventListener('click', onConnClick);
   document.getElementById('ledger-select').addEventListener('change', (e) => switchLedger(e.target.value));
   // renderLedgers alongside renderConn, not a full render(): going offline

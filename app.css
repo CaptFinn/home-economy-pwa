@@ -183,6 +183,24 @@ body {
 
 /* ── recent (the pending queue reuses this row styling) ────── */
 
+/* Carried from the sibling app's Index.html for task 3: the Recent
+   section's own heading row and the View all control, plus the
+   confirmed-entry arrow the pending rows don't draw. */
+.section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 22px var(--pad) 10px;
+}
+.section-head h2 {
+  margin: 0;
+  font: 500 11px var(--display);
+  text-transform: uppercase;
+  letter-spacing: var(--track);
+  color: var(--muted);
+}
+
 .txn {
   display: flex;
   align-items: baseline;
@@ -192,6 +210,14 @@ body {
   background: var(--surface);
 }
 .txn:last-child { border-bottom: 0.5px solid var(--hairline); }
+/* The arrow is a glyph, not a signal — with the chrome monochrome the signed
+   amount is the one place hue still means something. */
+.arrow {
+  flex: 0 0 auto;
+  width: 14px;
+  font-size: 13px;
+  color: var(--muted);
+}
 .txn[data-type="Deposit"]    .txn-amount { color: var(--in); }
 .txn[data-type="Withdrawal"] .txn-amount { color: var(--out); }
 /* Both stacks are flex columns so title-over-meta and amount-over-balance each

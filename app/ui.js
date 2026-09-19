@@ -2,7 +2,7 @@
 // list, and the connection line. Pure data shaping (entryFrom, connLabel)
 // lives in the same file because both are tiny and only this screen uses
 // them — splitting them out would be a second file for no reader's benefit.
-import { peso, signed, today } from './fmt.js';
+import { peso, signed, today, day } from './fmt.js';
 import { pendingFor } from './queue.js';
 
 /** Builds the `entry` object addEntry expects, from the form's raw strings
@@ -154,6 +154,11 @@ export function renderEntry(state) {
     view.accounts.forEach((a) => {
       const row = document.createElement('div');
       row.className = 'txn';
+      // Read by main.js's onScreenClick/onScreenKeydown (via .closest) to
+      // pick which account renderRecent shows next — a tap here never talks
+      // to the server, so there is nothing to disable or wait for.
+      row.dataset.account = a.name;
+      row.tabIndex = 0;
       const body = document.createElement('div');
       body.className = 'txn-body';
       const title = document.createElement('div');
@@ -258,6 +263,48 @@ export function renderEntry(state) {
   screen.appendChild(form);
 }
 
+/** One row for a still-queued addEntry — pulled out so renderPending (the
+    ledger-wide list above the form) and renderRecent (below; the same rows,
+    filtered one step further to a single account) draw the exact same
+    markup for "not sent yet" rather than two implementations that could
+    quietly drift apart. */
+function pendingRow(item) {
+  const e = item.args.entry;
+  const row = document.createElement('div');
+  row.className = item.state === 'parked' ? 'txn' : 'txn pending';
+  row.dataset.state = item.state;
+
+  const body = document.createElement('div');
+  body.className = 'txn-body';
+  const title = document.createElement('div');
+  title.className = 'txn-title';
+  title.textContent = e.account;
+  body.appendChild(title);
+  const meta = document.createElement('div');
+  meta.className = 'txn-meta';
+  meta.textContent = item.state === 'parked' ? (item.error || 'Could not send.') : 'pending';
+  body.appendChild(meta);
+  row.appendChild(body);
+
+  const right = document.createElement('div');
+  right.className = 'txn-right';
+  const amt = document.createElement('div');
+  amt.className = 'txn-amount fig';
+  // e.amount is unsigned (the wire shape, per entryFrom's own doc
+  // comment) — directedAmount folds e.direction back in for display only.
+  amt.textContent = signed(directedAmount(e));
+  right.appendChild(amt);
+  const del = document.createElement('button');
+  del.type = 'button';
+  del.className = 'linkish pending-mark';
+  del.textContent = 'Remove';
+  del.dataset.removeId = item.id;
+  right.appendChild(del);
+  row.appendChild(right);
+
+  return row;
+}
+
 /** Lists queued entries above the form, newest first. A pending item is
     dimmed (the .pending class already used by the sibling app's styling); a
     parked one — the server rejected it, or it's stale — stays full-strength
@@ -280,45 +327,101 @@ export function renderPending(queue, ledger) {
   }
   slot.textContent = '';
 
-  const items = queue
+  queue
     .filter((i) => i.op === 'addEntry' && i.args.entry.ledger === ledger)
-    .slice().reverse(); // newest first
-  items.forEach((item) => {
-    const e = item.args.entry;
-    const row = document.createElement('div');
-    row.className = item.state === 'parked' ? 'txn' : 'txn pending';
-    row.dataset.state = item.state;
+    .slice().reverse() // newest first
+    .forEach((item) => slot.appendChild(pendingRow(item)));
+}
 
-    const body = document.createElement('div');
-    body.className = 'txn-body';
-    const title = document.createElement('div');
-    title.className = 'txn-title';
-    title.textContent = e.account;
-    body.appendChild(title);
-    const meta = document.createElement('div');
-    meta.className = 'txn-meta';
-    meta.textContent = item.state === 'parked' ? (item.error || 'Could not send.') : 'pending';
-    body.appendChild(meta);
-    row.appendChild(body);
+/** One confirmed row from bootstrap's own `txns` — same shape as pendingRow
+    above (`.txn`, `.txn-body`, `.txn-title`, `.txn-meta`, `.txn-right`,
+    `.txn-amount`), plus the arrow and the running balance a queued entry
+    does not have yet, matching the Apps Script app's own renderRows because
+    the same two people read both. */
+function txnRow(t) {
+  const out = Number(t.amount) < 0;
+  const row = document.createElement('div');
+  row.className = 'txn';
+  row.dataset.type = out ? 'Withdrawal' : 'Deposit'; // what app.css's .txn[data-type] colors on
 
-    const right = document.createElement('div');
-    right.className = 'txn-right';
-    const amt = document.createElement('div');
-    amt.className = 'txn-amount fig';
-    // e.amount is unsigned (the wire shape, per entryFrom's own doc
-    // comment) — directedAmount folds e.direction back in for display only.
-    amt.textContent = signed(directedAmount(e));
-    right.appendChild(amt);
-    const del = document.createElement('button');
-    del.type = 'button';
-    del.className = 'linkish pending-mark';
-    del.textContent = 'Remove';
-    del.dataset.removeId = item.id;
-    right.appendChild(del);
-    row.appendChild(right);
+  const arrow = document.createElement('span');
+  arrow.className = 'arrow';
+  arrow.setAttribute('aria-hidden', 'true');
+  arrow.textContent = out ? '↑' : '↓';
+  row.appendChild(arrow);
 
-    slot.appendChild(row);
-  });
+  const body = document.createElement('div');
+  body.className = 'txn-body';
+  const title = document.createElement('div');
+  title.className = 'txn-title';
+  title.textContent = t.description || t.source_recipient;
+  body.appendChild(title);
+  const meta = document.createElement('div');
+  meta.className = 'txn-meta';
+  meta.textContent = day(t.date) + (t.description ? ' · ' + t.source_recipient : '');
+  body.appendChild(meta);
+  row.appendChild(body);
+
+  const right = document.createElement('div');
+  right.className = 'txn-right';
+  const amt = document.createElement('div');
+  amt.className = 'txn-amount fig';
+  amt.textContent = signed(Number(t.amount));
+  right.appendChild(amt);
+  const bal = document.createElement('div');
+  bal.className = 'txn-balance fig';
+  bal.textContent = peso(Number(t.balance));
+  right.appendChild(bal);
+  row.appendChild(right);
+
+  return row;
+}
+
+/** The Recent section (spec §3.1): the selected account's own last-synced
+    rows — bootstrap already sends 20 per account with a running balance,
+    and stage 1 simply threw them away — with this account's still-queued
+    entries above them, reusing pendingRow rather than a second "not sent"
+    rendering (carried defect §7, item 3: reconcile, don't accumulate, so
+    this task does not add a second way of saying "pending").
+
+    Called after renderEntry, which already wiped #screen for this repaint,
+    so — like renderPending's slot — the section here is always rebuilt
+    fresh rather than patched; there is nothing to reuse across renders. */
+export function renderRecent(state) {
+  const screen = document.getElementById('screen');
+  const view = state.view || { accounts: [] };
+  const queue = state.queue || [];
+  const acct = view.accounts.find((a) => a.name === state.account);
+  if (!acct) return; // no view yet, or the selected name is gone from this ledger
+
+  const section = document.createElement('section');
+  section.className = 'recent';
+  section.id = 'recent';
+
+  const head = document.createElement('div');
+  head.className = 'section-head';
+  const h2 = document.createElement('h2');
+  h2.textContent = 'Recent';
+  head.appendChild(h2);
+  const viewAll = document.createElement('button');
+  viewAll.type = 'button';
+  viewAll.id = 'view-all';
+  viewAll.className = 'linkish';
+  viewAll.textContent = 'View all';
+  head.appendChild(viewAll);
+  section.appendChild(head);
+
+  // This account's own unsent entries, above its confirmed ones — the same
+  // row pendingRow draws for the ledger-wide list above the form, filtered
+  // one step further (account, not just ledger) since Recent is per-account.
+  queue
+    .filter((i) => i.op === 'addEntry' && i.args.entry.ledger === view.ledger && i.args.entry.account === acct.name)
+    .slice().reverse()
+    .forEach((item) => section.appendChild(pendingRow(item)));
+
+  acct.txns.forEach((t) => section.appendChild(txnRow(t)));
+
+  screen.appendChild(section);
 }
 
 /** Rebuilds the ledger switcher — #ledger-select, fixed in index.html's

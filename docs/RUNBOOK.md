@@ -236,3 +236,50 @@ change the design if the answer were bad:
    second or two), that's worth mentioning — it's the trigger for switching
    to a short-lived session token instead of verifying Google's token on
    every call.
+
+---
+
+# Stage 2 runbook — ledger parity
+
+**No sheet change, no new Script Property, no new deployment.** Every op
+stage 2 uses (`ledger`, `entries`, `updateEntry`, `voidEntry`) is already
+live behind the stage 1 deployment. Shipping it is the same as any client
+change: push this repo to GitHub Pages as in §1. `sw.js`'s `CACHE` has been
+bumped, so an installed phone picks up the new code on its next load (close
+and reopen the app once if it still shows the old screen).
+
+The one server change, the narrower `doPost` catch, sits on the Apps Script
+repo's `stage-2-api` branch. It hardens an error path; nothing in stage 2
+depends on it. It goes live whenever that branch is merged, pushed with
+`clasp`, and deployed as a new version of the existing deployment (same
+URL, so `config.js` does not change).
+
+## Verify
+
+Only a person can do these checks: a real phone, a real sign-in and a real
+network. `./check.sh` already covers the rest.
+
+1. **Switch ledgers.** Pick another book in the top bar. Confirm the accounts
+   change, then reload and confirm the app opens on the book you picked.
+2. **The choice is per person.** Venice switches books on her phone. Confirm
+   your ledger does **not** move.
+3. **Edit an entry.** Tap a row in Recent, change its amount, **Save
+   changes**. In the sheet, confirm that row's `Logged by` and `Logged at` are
+   unchanged and that `Status` reads `edited …` with your name.
+4. **Void an entry.** Tap a row, **Void this entry**, then **Tap again to
+   void**. Confirm it leaves Recent, the balance moves, and the row is
+   **still in the sheet** with `Status` reading `void …`.
+5. **Offline.** Turn on airplane mode. Edit one entry and void another.
+   Confirm both rows say so (`edit pending` / `void pending`). Turn airplane
+   mode off and confirm both sync **without a tap**.
+6. **The conflict path.** Open the same entry on both phones. Save a change
+   on one, then save a different change on the other. The second must **not**
+   overwrite the first. It parks in the list above the form with "That entry
+   changed. Reload and try again.", offering **Reopen** (opens the entry
+   fresh, to redo) and **Discard**.
+7. **Discard touches nothing.** Discard a parked item. Confirm the sheet row
+   is exactly as the first phone left it.
+8. **The full log.** Tap **View all** on an account with more than 50
+   entries. Confirm **Load 50 more** appends older rows with sensible
+   running balances. Offline, confirm the log shows the cached rows and says
+   older entries need a connection, rather than showing a button.

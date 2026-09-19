@@ -5,7 +5,7 @@ import { getView, putView, listQueue, putQueued, removeQueued } from './db.js';
 import { enqueue, drain } from './queue.js';
 import * as api from './api.js';
 import { currentAuth, refresh, signIn } from './auth.js';
-import { entryFrom, validateEntry, renderEntry, renderPending, renderRecent, renderLog, renderConn, renderLedgers, nextRetryDelay } from './ui.js';
+import { entryFrom, validateEntry, editFields, renderEntry, renderPending, renderRecent, renderLog, renderConn, renderLedgers, nextRetryDelay } from './ui.js';
 
 // memoryStore()'s shape, over the real IndexedDB functions — queue.js and
 // this module don't need to know the difference.
@@ -29,6 +29,17 @@ let account = null;
 // { account, rows, hasMore, loading, error }, or null for home. One view at
 // a time — spec §3 has no router and needs none.
 let log = null;
+// The entry open in the form for editing (a row from Recent or the log,
+// carrying its row + fp handle), or null for a new entry; `voidArmed` is the
+// first of Void's two taps (spec §3.3).
+let editing = null;
+let voidArmed = false;
+// What is typed in the form, kept across repaints. Every render() rebuilds
+// #screen, and a background sync repaints whenever it finishes — without
+// this, coming back from the receipt photo to a half-typed edit would find
+// it reset. Updated on every `input` (boot, below) and set outright when the
+// form's purpose changes; null means the form's own blank defaults.
+let draft = null;
 const conn = { online: navigator.onLine, syncing: false, at: null, error: '' };
 
 // navigator.onLine goes true the moment the OS sees an interface, which is
@@ -72,13 +83,14 @@ function render() {
   }
 
   if (log) {
-    renderLog({ log, conn });
+    renderLog({ log, conn, queue, ledger: view ? view.ledger : '' });
   } else {
     // conn travels too: when a sync fails, the form's own hint is where the
     // reason belongs — that is the line someone reads when the button is dead.
-    renderEntry({ view, queue, conn }); // rebuilds #screen, including an empty pending slot
+    renderEntry({ view, queue, conn, editing, voidArmed }); // rebuilds #screen, including an empty pending slot
+    if (draft) fillForm(draft);
     renderPending(queue, view ? view.ledger : ''); // fills that slot in, this book's entries only
-    renderRecent({ view, account, queue }); // the selected account's last-synced rows, plus its own pending ones
+    renderRecent({ view, account, queue, editing }); // the selected account's last-synced rows, plus its own pending ones
   }
   renderConn(conn);
   renderLedgers({ view, conn }); // #ledger-select is fixed in index.html's topbar, like #conn
@@ -97,6 +109,36 @@ function hint(message) {
   el.textContent = message;
   if (message) el.setAttribute('data-state', 'error');
   else el.removeAttribute('data-state');
+}
+
+function fillForm(f) {
+  const set = (id, v) => { document.getElementById(id).value = v == null ? '' : v; };
+  set('f-date', f.date);
+  set('f-type', f.type);
+  set('f-account', f.account);
+  set('f-source', f.source);
+  set('f-desc', f.description);
+  set('f-amount', f.amount);
+}
+
+/** Opens a row in the form (spec §3.3). The form is the feedback, so a row
+    tapped in the full log closes the log to land on it. */
+function enterEditMode(t) {
+  log = null;
+  editing = t;
+  voidArmed = false;
+  draft = editFields(t);
+  render();
+}
+
+/** Back to a blank new entry. Called by Cancel, after a save or void, and by
+    anything that changes what the form is about — account, ledger or view.
+    Leaves the repaint to the caller, which always has one of its own. */
+function leaveEditMode() {
+  if (!editing) return;
+  editing = null;
+  voidArmed = false;
+  draft = null;
 }
 
 function formValues() {
@@ -124,7 +166,10 @@ async function onSubmit(event) {
   event.preventDefault();
   if (submitting) return;
 
-  const entry = entryFrom(formValues(), crypto.randomUUID());
+  const open = editing;
+  // An update names its row by row + fp, not by id — updateEntry_ never
+  // reads one — so only a new entry gets the idempotency id.
+  const entry = entryFrom(formValues(), open ? null : crypto.randomUUID());
   const problem = validateEntry(entry);
   if (problem) { hint(problem); return; }
 
@@ -140,11 +185,17 @@ async function onSubmit(event) {
   const submit = event.target.querySelector('.submit');
   if (submit) submit.disabled = true;
   try {
-    await enqueue(store, 'addEntry', { entry });
+    // Both ride the same queue (spec §5), so an edit made offline is as
+    // safe as a new entry. The server re-checks `fp` before writing: an
+    // edit that arrives stale is refused and parks, never overwrites.
+    if (open) await enqueue(store, 'updateEntry', { ledger: view.ledger, row: open.row, fp: open.fp, entry });
+    else await enqueue(store, 'addEntry', { entry });
   } finally {
     submitting = false;
     if (submit) submit.disabled = false;
   }
+  leaveEditMode();
+  draft = null; // sent, so the next entry starts blank
 
   // The entry is queued and must show as pending right now — the form never
   // waits on the network to clear itself; that's the entire point of the
@@ -164,6 +215,12 @@ function onScreenClick(event) {
     return;
   }
 
+  const reopenBtn = event.target.closest('[data-reopen-id]');
+  if (reopenBtn) { reopen(reopenBtn.dataset.reopenId); return; }
+  if (event.target.closest('#edit-cancel')) { leaveEditMode(); render(); return; }
+  if (event.target.closest('#edit-void')) { onVoid(); return; }
+  const txnRow = event.target.closest('[data-row]');
+  if (txnRow) { onRowTap(txnRow.dataset.row); return; }
   if (event.target.closest('#view-all')) { openLog(); return; }
   if (event.target.closest('#log-back')) { closeLog(); return; }
   if (event.target.closest('#log-more')) { loadMore(); return; }
@@ -172,11 +229,73 @@ function onScreenClick(event) {
   if (acctRow) selectAccount(acctRow.dataset.account);
 }
 
+/** A tap on an entry row, in Recent or the log. The row number is looked up
+    in whatever is on screen, so the fp that travels is the one just shown. */
+function onRowTap(rowAttr) {
+  const n = Number(rowAttr);
+  const acct = view && view.accounts.find((a) => a.name === account);
+  const rows = log ? log.rows : (acct ? acct.txns : []);
+  const t = rows.find((r) => r.row === n);
+  if (t) enterEditMode(t);
+}
+
+/** Void this entry: the first tap only arms it (the link reads "Tap again
+    to void"); the second queues the void. `submitting` is onSubmit's own
+    guard — a void is an enqueue too, and two overlapping enqueues can tie on
+    their ordering stamp (see `submitting`'s comment). */
+async function onVoid() {
+  if (!editing || submitting) return;
+  if (!voidArmed) { voidArmed = true; render(); return; }
+  const open = editing;
+  submitting = true;
+  try {
+    // ledger/row/fp are all voidEntry reads. account and label ride along
+    // only so the pending list can name the row (ui.js's pendingRow); the
+    // server ignores them.
+    await enqueue(store, 'voidEntry', {
+      ledger: view.ledger, row: open.row, fp: open.fp,
+      account: open.account, label: open.description || open.source_recipient,
+    });
+  } finally {
+    submitting = false;
+  }
+  leaveEditMode();
+  queue = await store.listQueue();
+  render();
+  if (navigator.onLine) sync();
+}
+
+/** Reopen, on a refused edit or void (spec §5): the server said the row
+    changed under it, so the refused change is dropped, the view refetched,
+    and the row opened fresh in the form for the person to redo — never
+    merged automatically, this is money. Needs the network: redoing it
+    against the same stale copy would only be refused again. */
+async function reopen(id) {
+  const item = queue.find((i) => i.id === id);
+  if (!item) return;
+  if (!navigator.onLine) { hint('Reopening needs a connection, to fetch the entry fresh.'); return; }
+  await removeQueued(id);
+  queue = await store.listQueue();
+  // ponytail: if a sync is already running this returns at once and the
+  // row may still be stale — at worst the redo is refused and parks again.
+  await sync();
+  const fresh = view && view.ledger === item.args.ledger
+    && view.accounts.flatMap((a) => a.txns).find((t) => t.row === item.args.row);
+  if (fresh) {
+    account = fresh.account;
+    enterEditMode(fresh);
+  } else {
+    render();
+    hint('That entry is not in Recent any more — it may have been voided. Check View all.');
+  }
+}
+
 /** `View all` (spec §3.2). Online, page one comes from the server like every
     other page. Offline, the cached bootstrap already holds this account's
     newest rows with their balances — the same rows Recent shows — so those
     stand in for page one, and renderLog says later pages need a connection. */
 function openLog() {
+  leaveEditMode(); // changing view leaves edit mode (spec §3.3)
   const acct = view && view.accounts.find((a) => a.name === account);
   if (!acct) return;
   if (navigator.onLine) {
@@ -230,6 +349,7 @@ async function loadMore() {
     list. Nothing here talks to the server, so unlike the branch above,
     there is nothing to await: just a new account in state and a re-render. */
 function selectAccount(name) {
+  if (name !== account) leaveEditMode();
   account = name;
   render();
 }
@@ -240,6 +360,8 @@ function selectAccount(name) {
     onkeydown of their own). */
 function onScreenKeydown(event) {
   if (event.key !== 'Enter' && event.key !== ' ') return;
+  const txnRow = event.target.closest('[data-row]');
+  if (txnRow) { event.preventDefault(); onRowTap(txnRow.dataset.row); return; }
   const acctRow = event.target.closest('[data-account]');
   if (!acctRow) return;
   event.preventDefault();
@@ -403,6 +525,7 @@ export async function switchLedger(name) {
     // carry over from the last bootstrap.
     view = { ...view, ledger: res.data.ledger, accounts: res.data.accounts };
     log = null; // the account it was showing belongs to the other book
+    leaveEditMode(); // and so does the row open in the form
     await putView('bootstrap', view); // survives a reload
     render();
   } finally {
@@ -459,6 +582,9 @@ export async function boot() {
     if (e.target.id === 'entry-form') onSubmit(e);
   });
   document.getElementById('screen').addEventListener('click', onScreenClick);
+  document.getElementById('screen').addEventListener('input', (e) => {
+    if (e.target.closest('#entry-form')) draft = formValues();
+  });
   document.getElementById('screen').addEventListener('keydown', onScreenKeydown);
   document.getElementById('conn').addEventListener('click', onConnClick);
   document.getElementById('ledger-select').addEventListener('change', (e) => switchLedger(e.target.value));

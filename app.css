@@ -300,3 +300,20 @@ body {
 }
 .more:disabled { opacity: 0.5; cursor: default; }
 #log-hint { padding: 0 var(--pad); }
+
+/* ── editing (stage 2, spec §3.3) — carried from the sibling app ── */
+
+.entry h2 {
+  margin: 0 0 16px;
+  font: 500 11px var(--display);
+  text-transform: uppercase;
+  letter-spacing: var(--track);
+  color: var(--muted);
+}
+.edit-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+}
+.linkish.danger { color: var(--out); }

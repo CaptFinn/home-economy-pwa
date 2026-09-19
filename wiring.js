@@ -342,6 +342,51 @@ const { enqueue } = await import('./app/queue.js');
     'offline, the log says what it cannot do rather than offering a dead button');
 }
 
+// ── editing and voiding (spec §3.3, §5) ───────────────────────────────
+{
+  const txn = { row: 12, fp: 'fp-12', date: '2026-09-17', account: 'Joint Wallet',
+                source_recipient: 'Food', description: 'Beef loaf', amount: -60 };
+  const f = ui.editFields(txn);
+  assert.equal(f.type, 'Withdrawal', 'a negative amount is money out');
+  assert.equal(f.amount, '60', 'shown unsigned — the type control carries the sign');
+  assert.equal(f.account, 'Joint Wallet', 'and the rest fills in');
+
+  // what an edit puts on the wire
+  const store = memoryStore();
+  const entry = ui.entryFrom({
+    ledger: 'Bills', date: '2026-09-17', account: 'Joint Wallet',
+    type: 'Withdrawal', source: 'Food', description: 'Beef loaf and eggs', amount: '75',
+  }, 'ignored-for-updates');
+  await enqueue(store, 'updateEntry', { ledger: 'Bills', row: 12, fp: 'fp-12', entry });
+  const [queued] = await store.listQueue();
+  assert.equal(queued.op, 'updateEntry', 'queued as an update');
+  assert.equal(queued.args.row, 12, 'against the row it came from');
+  assert.equal(queued.args.fp, 'fp-12', 'carrying the fingerprint the server will re-check');
+  assert.ok(queued.args.entry.amount > 0, 'still an unsigned amount plus a direction');
+  assert.equal(queued.args.entry.direction, 'out', 'the direction travels');
+
+  await enqueue(store, 'voidEntry', { ledger: 'Bills', row: 12, fp: 'fp-12' });
+  const both = await store.listQueue();
+  assert.equal(both.length, 2, 'a void is its own queued item');
+  assert.equal(both[1].op, 'voidEntry', 'and names itself');
+}
+
+// ── a row shows what is queued against it (spec §5) ───────────────────
+{
+  const view = {
+    ledger: 'Bills', ledgers: ['Bills'],
+    accounts: [{ name: 'Joint Wallet', balance: 1840, txns: [
+      { row: 12, fp: 'fp-12', date: '2026-09-17', account: 'Joint Wallet',
+        source_recipient: 'Food', description: 'Beef loaf', amount: -60, balance: 1840 },
+    ] }],
+  };
+  const queue = [{ id: 'q1', op: 'voidEntry', state: 'pending',
+                   args: { ledger: 'Bills', row: 12, fp: 'fp-12' } }];
+  ui.renderRecent({ view, account: 'Joint Wallet', queue });
+  assert.ok(textOf(document.getElementById('screen')).toLowerCase().includes('pending'),
+    'the row itself says an edit or void is waiting, not only the pending list');
+}
+
 // ── main.js's actual wiring: the submit handler and a failed sync ─────
 // Everything above exercises ui.js's pure and DOM-drawing halves directly.
 // Two of stage 1's three shipped bugs — the client-signed amount, and the
@@ -532,6 +577,61 @@ const { enqueue } = await import('./app/queue.js');
     'through onSubmit, not just entryFrom directly — the queued amount is still POSITIVE');
   assert.equal(queuedAfterSubmit[0].args.entry.direction, 'out', 'and direction still carries the sign');
 
+  // ── editing and voiding through main.js's own handlers (spec §3.3, §6:
+  // "what reaches the queue is asserted, not just what the form produced").
+  // Still offline from just above, so no sync races these. ─────────────
+  {
+    const screen = document.getElementById('screen');
+    const riceRow = () => find(screen, (el) => el.dataset.row === '1');
+
+    screen.dispatch('click', { target: riceRow().querySelector('.txn-title') });
+    assert.ok(textOf(screen).includes('Edit entry'), 'tapping a Recent row opens it in the form');
+    assert.ok(textOf(screen).includes('Save changes'), 'with the sibling app\'s own wording');
+    assert.equal(document.getElementById('f-amount').value, '200', 'filled in, unsigned');
+    assert.ok(riceRow().className.includes('is-editing'), 'and the row says which one is open');
+
+    // A repaint mid-edit (a background sync finishing does exactly this)
+    // must not throw away what is typed.
+    document.getElementById('f-amount').value = '250';
+    screen.dispatch('input', { target: document.getElementById('f-amount') });
+    screen.dispatch('click', { target: find(screen, (el) => el.dataset.account === 'Groceries') });
+    assert.equal(document.getElementById('f-amount').value, '250', 'a repaint keeps the typed amount');
+    assert.ok(textOf(screen).includes('Edit entry'), 'and the same account tapped again stays in edit mode');
+
+    screen.dispatch('submit', { target: document.getElementById('entry-form') });
+    await settle();
+    const update = (await db.listQueue()).find((q) => q.op === 'updateEntry');
+    assert.ok(update, 'Save changes queued an update');
+    assert.deepEqual([update.args.ledger, update.args.row, update.args.fp], ['Bills', 1, 'g1'],
+      'against the row and fingerprint that were on screen');
+    assert.equal(update.args.entry.amount, 250, 'unsigned, through the real handler');
+    assert.equal(update.args.entry.direction, 'out', 'with its direction');
+    assert.ok(textOf(screen).includes('New entry'), 'saving leaves edit mode');
+    assert.equal(document.getElementById('f-amount').value, '', 'with a blank form');
+    assert.ok(textOf(riceRow()).includes('edit pending'), 'and the row itself says an edit is waiting');
+
+    screen.dispatch('click', { target: riceRow() });
+    screen.dispatch('click', { target: find(screen, (el) => el.id === 'edit-void') });
+    assert.equal(find(screen, (el) => el.id === 'edit-void').textContent, 'Tap again to void',
+      'the first tap only arms the void');
+    assert.ok(!(await db.listQueue()).some((q) => q.op === 'voidEntry'), 'and queues nothing');
+    screen.dispatch('click', { target: find(screen, (el) => el.id === 'edit-void') });
+    await settle();
+    const voided = (await db.listQueue()).find((q) => q.op === 'voidEntry');
+    assert.deepEqual([voided.args.ledger, voided.args.row, voided.args.fp], ['Bills', 1, 'g1'],
+      'the second tap queues the void against the same row');
+    assert.ok(textOf(riceRow()).includes('void pending'), 'and the row says so');
+
+    // Cancel, and changing account, both leave edit mode.
+    screen.dispatch('click', { target: riceRow() });
+    screen.dispatch('click', { target: find(screen, (el) => el.id === 'edit-cancel') });
+    assert.ok(textOf(screen).includes('New entry'), 'Cancel leaves edit mode');
+    screen.dispatch('click', { target: riceRow() });
+    screen.dispatch('click', { target: find(screen, (el) => el.dataset.account === 'Electricity') });
+    assert.ok(textOf(screen).includes('New entry'), 'so does switching account');
+    screen.dispatch('click', { target: find(screen, (el) => el.dataset.account === 'Groceries') });
+  }
+
   // ── a failed sync is not a synced one, through the actual sync() ─────
   fetchImpl = fetchReturning({ ok: false, error: 'Could not reach the sheet.', kind: 'server' });
   // Still offline from above — sidesteps scheduleRetry()'s real setTimeout,
@@ -632,6 +732,38 @@ const { enqueue } = await import('./app/queue.js');
   await settle();
   assert.equal(document.getElementById('conn').textContent, 'sign in again',
     'a token the server rejects mid-switch arms the sign-in affordance immediately');
+
+  // ── a refused edit parks, and Reopen redoes it against fresh data — never
+  // merged (spec §5) ─────────────────────────────────────────────────────
+  {
+    const screen = document.getElementById('screen');
+    await db.putQueued({
+      id: 'parked-1', op: 'updateEntry', state: 'parked', at: 1,
+      error: 'That entry changed. Reload and try again.',
+      args: { ledger: 'Bills', row: 1, fp: 'stale',
+              entry: { ledger: 'Bills', account: 'Groceries', amount: 5, direction: 'out' } },
+    });
+    const freshView = {
+      ...bootstrapView,
+      accounts: [{ name: 'Groceries', balance: 250, txns: [
+        { row: 1, fp: 'g1-fresh', date: '2026-09-15', account: 'Groceries',
+          source_recipient: 'SM', description: 'Rice', amount: -250, balance: 250 }] }],
+    };
+    // Answers the queued sends (ok, so they clear) and the bootstrap alike.
+    fetchImpl = fetchReturning({ ok: true, data: freshView });
+    navigator.onLine = true;
+    await main.sync();
+
+    assert.ok(textOf(screen).includes('That entry changed'), 'the parked edit shows its message');
+    assert.ok(textOf(screen).includes('Discard'), 'offers discard');
+    screen.dispatch('click', { target: find(screen, (el) => el.dataset.reopenId === 'parked-1') });
+    await settle();
+    assert.ok(!(await db.listQueue()).some((q) => q.id === 'parked-1'), 'Reopen drops the refused change');
+    assert.ok(textOf(screen).includes('Edit entry'), 'and opens the row in the form');
+    assert.equal(document.getElementById('f-amount').value, '250', 'with the fresh data, not the refused edit');
+    screen.dispatch('click', { target: find(screen, (el) => el.id === 'edit-cancel') });
+    navigator.onLine = false;
+  }
 }
 
 // ── the ledger switcher (spec §4) ─────────────────────────────────────

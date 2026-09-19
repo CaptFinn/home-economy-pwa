@@ -47,6 +47,21 @@ export function validateEntry(entry) {
   return null;
 }
 
+/** An entry as the form's fields, for edit mode (spec §3.3). The amount is
+    shown unsigned because the type control carries the sign — the same rule
+    the wire follows (entryFrom above), and the sibling app's own editFields. */
+export function editFields(t) {
+  const amount = Number(t.amount || 0);
+  return {
+    date: t.date,
+    type: amount < 0 ? 'Withdrawal' : 'Deposit',
+    account: t.account,
+    source: t.source_recipient,
+    description: t.description,
+    amount: String(Math.abs(amount)),
+  };
+}
+
 /** The one line of connection status shown at the top of the screen. */
 export function connLabel(state) {
   if (!state.online) return 'offline';
@@ -192,7 +207,13 @@ export function renderEntry(state) {
 
   const form = document.createElement('form');
   form.id = 'entry-form';
+  form.className = 'entry';
   form.autocomplete = 'off';
+  // Same heading and button wording as the sibling app in both modes
+  // (spec §3.3): the same two people use both.
+  const heading = document.createElement('h2');
+  heading.textContent = state.editing ? 'Edit entry' : 'New entry';
+  form.appendChild(heading);
 
   const row2 = document.createElement('div');
   row2.className = 'row2';
@@ -234,8 +255,29 @@ export function renderEntry(state) {
   const submit = document.createElement('button');
   submit.className = 'submit';
   submit.type = 'submit';
-  submit.textContent = 'Add entry';
+  submit.textContent = state.editing ? 'Save changes' : 'Add entry';
   form.appendChild(submit);
+
+  if (state.editing) {
+    // Voiding is a quiet link, not a second loud button, and it asks twice
+    // (state.voidArmed, owned by main.js) — a browser confirm() is no better
+    // on a phone, and a money row is worth asking about twice.
+    const actions = document.createElement('div');
+    actions.className = 'edit-actions';
+    const cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.id = 'edit-cancel';
+    cancel.className = 'linkish';
+    cancel.textContent = 'Cancel';
+    actions.appendChild(cancel);
+    const voidBtn = document.createElement('button');
+    voidBtn.type = 'button';
+    voidBtn.id = 'edit-void';
+    voidBtn.className = 'linkish danger';
+    voidBtn.textContent = state.voidArmed ? 'Tap again to void' : 'Void this entry';
+    actions.appendChild(voidBtn);
+    form.appendChild(actions);
+  }
 
   const hint = document.createElement('p');
   hint.className = 'hint';
@@ -263,13 +305,24 @@ export function renderEntry(state) {
   screen.appendChild(form);
 }
 
+/** What a still-pending queued item says about itself, per op. */
+const OP_PENDING = { addEntry: 'pending', updateEntry: 'edit pending', voidEntry: 'void pending' };
+
+/** Which book a queued item belongs to: an addEntry names it inside its
+    entry, an edit or void alongside its row handle. */
+function ledgerOf(item) {
+  return item.args.ledger || (item.args.entry && item.args.entry.ledger);
+}
+
 /** One row for a still-queued addEntry — pulled out so renderPending (the
     ledger-wide list above the form) and renderRecent (below; the same rows,
     filtered one step further to a single account) draw the exact same
     markup for "not sent yet" rather than two implementations that could
     quietly drift apart. */
 function pendingRow(item) {
-  const e = item.args.entry;
+  // A void carries no entry of its own — just the row handle, plus the
+  // label main.js copies in for exactly this line.
+  const e = item.args.entry || { account: item.args.label || 'An entry' };
   const row = document.createElement('div');
   row.className = item.state === 'parked' ? 'txn' : 'txn pending';
   row.dataset.state = item.state;
@@ -282,7 +335,7 @@ function pendingRow(item) {
   body.appendChild(title);
   const meta = document.createElement('div');
   meta.className = 'txn-meta';
-  meta.textContent = item.state === 'parked' ? (item.error || 'Could not send.') : 'pending';
+  meta.textContent = item.state === 'parked' ? (item.error || 'Could not send.') : OP_PENDING[item.op];
   body.appendChild(meta);
   row.appendChild(body);
 
@@ -292,12 +345,24 @@ function pendingRow(item) {
   amt.className = 'txn-amount fig';
   // e.amount is unsigned (the wire shape, per entryFrom's own doc
   // comment) — directedAmount folds e.direction back in for display only.
-  amt.textContent = signed(directedAmount(e));
+  if (e.amount != null) amt.textContent = signed(directedAmount(e));
   right.appendChild(amt);
+  // A refused edit or void (spec §5): no automatic merge, this is money —
+  // the person picks. Reopen fetches the entry fresh and opens it in the
+  // form to redo; Discard drops the refused change and touches nothing on
+  // the server.
+  if (item.state === 'parked' && item.op !== 'addEntry') {
+    const reopen = document.createElement('button');
+    reopen.type = 'button';
+    reopen.className = 'linkish pending-mark';
+    reopen.textContent = 'Reopen';
+    reopen.dataset.reopenId = item.id;
+    right.appendChild(reopen);
+  }
   const del = document.createElement('button');
   del.type = 'button';
   del.className = 'linkish pending-mark';
-  del.textContent = 'Remove';
+  del.textContent = item.state === 'parked' ? 'Discard' : 'Remove';
   del.dataset.removeId = item.id;
   right.appendChild(del);
   row.appendChild(right);
@@ -328,7 +393,7 @@ export function renderPending(queue, ledger) {
   slot.textContent = '';
 
   queue
-    .filter((i) => i.op === 'addEntry' && i.args.entry.ledger === ledger)
+    .filter((i) => ledgerOf(i) === ledger)
     .slice().reverse() // newest first
     .forEach((item) => slot.appendChild(pendingRow(item)));
 }
@@ -338,11 +403,23 @@ export function renderPending(queue, ledger) {
     `.txn-amount`), plus the arrow and the running balance a queued entry
     does not have yet, matching the Apps Script app's own renderRows because
     the same two people read both. */
-function txnRow(t) {
+function txnRow(t, ctx) {
   const out = Number(t.amount) < 0;
+  // A queued edit or void against this very row (spec §5): shown on the row
+  // itself, so the history never quietly disagrees with what was typed.
+  // Matched by row number within the book — rows never move in this sheet
+  // (nothing deletes one), and a stale fingerprint is the server's to judge.
+  const queued = ctx.queue.filter((i) => i.op !== 'addEntry' && i.args.ledger === ctx.ledger && i.args.row === t.row).pop();
   const row = document.createElement('div');
-  row.className = 'txn';
+  row.className = 'txn'
+    + (queued && queued.state === 'pending' ? ' pending' : '')
+    + (ctx.editingRow === t.row ? ' is-editing' : '');
   row.dataset.type = out ? 'Withdrawal' : 'Deposit'; // what app.css's .txn[data-type] colors on
+  // Tapping a row edits it (main.js reads this via .closest). A div, not a
+  // button, because it is a two-line layout; tabindex and main.js's
+  // Enter/Space handling keep it reachable without a finger.
+  row.dataset.row = String(t.row);
+  row.tabIndex = 0;
 
   const arrow = document.createElement('span');
   arrow.className = 'arrow';
@@ -358,7 +435,8 @@ function txnRow(t) {
   body.appendChild(title);
   const meta = document.createElement('div');
   meta.className = 'txn-meta';
-  meta.textContent = day(t.date) + (t.description ? ' · ' + t.source_recipient : '');
+  meta.textContent = day(t.date) + (t.description ? ' · ' + t.source_recipient : '')
+    + (!queued ? '' : ' · ' + (queued.state === 'pending' ? OP_PENDING[queued.op] : 'not applied'));
   body.appendChild(meta);
   row.appendChild(body);
 
@@ -419,7 +497,8 @@ export function renderRecent(state) {
     .slice().reverse()
     .forEach((item) => section.appendChild(pendingRow(item)));
 
-  acct.txns.forEach((t) => section.appendChild(txnRow(t)));
+  const ctx = { queue, ledger: view.ledger, editingRow: state.editing ? state.editing.row : null };
+  acct.txns.forEach((t) => section.appendChild(txnRow(t, ctx)));
 
   screen.appendChild(section);
 }
@@ -453,7 +532,9 @@ export function renderLog(state) {
   head.appendChild(h2);
   section.appendChild(head);
 
-  log.rows.forEach((t) => section.appendChild(txnRow(t)));
+  // No is-editing here: tapping a log row closes the log to open the form.
+  const ctx = { queue: state.queue || [], ledger: state.ledger, editingRow: null };
+  log.rows.forEach((t) => section.appendChild(txnRow(t, ctx)));
 
   if (log.hasMore && state.conn.online) {
     const more = document.createElement('button');

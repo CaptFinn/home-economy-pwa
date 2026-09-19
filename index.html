@@ -21,6 +21,7 @@
 <div class="wrap">
   <div class="topbar">
     <h1>Home economy</h1>
+    <select class="ledger-select" id="ledger-select" aria-label="Ledger"></select>
     <span class="conn" id="conn"></span>
     <span class="whoami" id="whoami"></span>
   </div>
@@ -29,4 +30,9 @@
 </div>
 
 <script src="https://accounts.google.com/gsi/client" async></script>
-<script type="module" src="app/main.js"></script>
+<!-- The module has no side effects on import, so check.sh can load it
+     against a stub DOM; the page is what decides to start the app. -->
+<script type="module">
+  import { boot } from './app/main.js';
+  boot();
+</script>

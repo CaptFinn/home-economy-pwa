@@ -132,7 +132,7 @@ export function makeDom() {
   // without that second step document.querySelector/All, which walks the
   // body's actual children rather than the byId map, searched an empty
   // tree and returned null for every one of them.
-  for (const id of ['screen', 'conn', 'whoami', 'foot', 'ledger-select']) {
+  for (const id of ['screen', 'conn', 'whoami', 'foot', 'ledger-select', 'tab-ledger', 'tab-bills', 'bills']) {
     const el = make('div');
     el.id = id;
     byId.set(id, el);
@@ -162,7 +162,14 @@ export function find(el, fn) {
 
 const { document, byId } = makeDom();
 globalThis.document = document;
-globalThis.window = { addEventListener() {}, location: { origin: 'https://example.test' } };
+// Records listeners, so a check can fire `online`/`offline` the way the
+// browser would: main.js's conn.online only ever changes through them.
+const windowListeners = {};
+globalThis.window = {
+  addEventListener(type, fn) { (windowListeners[type] ||= []).push(fn); },
+  location: { origin: 'https://example.test' },
+};
+const fireWindow = (type) => (windowListeners[type] || []).forEach((fn) => fn({ type }));
 // Node itself defines a read-only `navigator` global (its own Navigator-ish
 // object, since Node 21) — a plain assignment throws where a browser would
 // just let this replace `window.navigator`. defineProperty stands in for
@@ -790,6 +797,101 @@ const { enqueue } = await import('./app/queue.js');
     assert.equal(document.getElementById('f-amount').value, '250', 'with the fresh data, not the refused edit');
     screen.dispatch('click', { target: find(screen, (el) => el.id === 'edit-cancel') });
     navigator.onLine = false;
+  }
+
+  // ── the Bills tab (stage 3 spec §2–§3) ────────────────────────────────
+  {
+    const { SWAP_PAYDAY, SWAP_CYCLE } = await import('./app/bills.js');
+    const billsEl = document.getElementById('bills');
+    const scopeSelect = () => document.getElementById('bills-scope');
+    const pickScope = async (value) => {
+      scopeSelect().value = value;
+      billsEl.dispatch('change', { target: scopeSelect() });
+      await settle();
+    };
+
+    // One fetch stand-in for every op below, answering per op, so a sync
+    // (queued items, then bootstrap, then the open scope) can run for real.
+    const sent = [];
+    const answers = { bootstrap: { ok: true, data: bootstrapView } };
+    fetchImpl = async (url, req) => {
+      const body = JSON.parse(req.body);
+      sent.push(body);
+      const a = answers[body.op];
+      return { text: async () => JSON.stringify(typeof a === 'function' ? a(body.args) : (a || { ok: true, data: {} })) };
+    };
+
+    const cycleView = {
+      cycle: '2026-09', cycles: ['2026-09', '2026-08'], payers: ['Vin', 'Venice'], me: 'Vin',
+      rows: [
+        { row: 5, name: 'Rent', amount: 7500, due_date: '2026-10-01', cutoffs: 2, method: 'digital',
+          notes: '', carried: false, pending: false, installment: 1875, progress: 1875, remaining: 5625,
+          status: 'Partially funded',
+          schedule: [
+            { payday: '2026-09-15', each: 1875, both: 3750, paid: [true, false], at: ['2026-09-15 09:30', ''], by: ['Vin', ''] },
+            { payday: '2026-09-30', each: 1875, both: 3750, paid: [false, false], at: ['', ''], by: ['', ''] },
+          ] },
+        { row: 6, name: 'Water', amount: 510, due_date: '2026-09-20', cutoffs: 1, method: 'cash',
+          notes: 'Maynilad', carried: false, pending: false, installment: 255, progress: 510, remaining: 0,
+          status: 'Fully funded',
+          schedule: [
+            { payday: '2026-09-15', each: 255, both: 510, paid: [true, true],
+              at: ['2026-09-15 09:30', '2026-09-15 10:00'], by: ['Vin', 'Venice'] },
+          ] },
+      ],
+      totals: { billed: 8010, funded: 2385, remaining: 5625, pending: 0 },
+    };
+    const paydayView = {
+      payday: '2026-09-15', paydays: ['2026-09-15', '2026-09-30'], payers: ['Vin', 'Venice'], me: 'Vin',
+      rows: [{ row: 9, name: 'Internet', cycle: '2026-08', method: 'digital', due_date: '2026-09-20',
+               each: 674.5, paid: [false, false], at: ['', ''], by: ['', ''] }],
+      totals: { each: 674.5, cash: 0, digital: 674.5, all: 1349 },
+    };
+    answers.bills = { ok: true, data: cycleView };
+    answers.payday = { ok: true, data: paydayView };
+
+    // The stub's `hidden` starts false, so this is what proves render()
+    // actually manages it rather than the assertion after the tap passing
+    // on the default.
+    assert.equal(billsEl.hidden, true, 'precondition: the app booted on the ledger, Bills hidden');
+
+    navigator.onLine = true;
+    document.getElementById('tab-bills').dispatch('click');
+    await settle();
+    assert.equal(billsEl.hidden, false, 'the Bills tab shows its panel');
+    assert.equal(document.getElementById('screen').hidden, true, 'in place of the ledger');
+    assert.deepEqual(sent.filter((b) => b.op === 'bills').map((b) => b.args.cycle), [''],
+      'the first open asks the server for the latest cycle');
+    let text = textOf(billsEl);
+    assert.ok(text.includes('Rent · due oct 1'), 'a card per bill, with its due date');
+    assert.ok(text.includes('₱1,875.00 / ₱7,500.00 · ₱5,625.00 remaining'), "progress, exactly as the server sent it");
+    assert.ok(text.includes('Carry to 2026-10 →'), 'a fully funded bill offers to carry');
+    assert.ok(text.includes('Start 2026-10'), 'Start names the cycle it will create');
+    assert.ok(text.includes('30%'), 'the totals carry their ratio as a plain percentage');
+    assert.ok(await db.getView('bills:cycle:2026-09'), 'cached under the scope the server named, not under ""');
+
+    await pickScope(SWAP_PAYDAY);
+    text = textOf(billsEl);
+    assert.ok(text.includes('Payday sep 15, 2026'), 'the payday view names its payday');
+    assert.ok(text.includes('Internet') && text.includes('Each of you') && text.includes('Both of you'),
+      'one line per bill, and the payday totals');
+    assert.ok(await db.getView('bills:payday:2026-09-15'), 'and is cached too');
+
+    navigator.onLine = false;
+    fireWindow('offline');
+    await pickScope(SWAP_CYCLE);
+    assert.ok(textOf(billsEl).includes('Rent'), 'offline, swapping back brings the cycle last opened from the cache');
+    assert.equal(find(billsEl, (el) => el.dataset.carryRow === '6').disabled, true, 'Carry is disabled offline');
+    assert.equal(document.getElementById('bills-newcycle').disabled, true, 'and so is Start');
+    assert.ok(textOf(billsEl).includes('need a connection'), 'with a hint saying why');
+
+    await pickScope('2026-08');
+    assert.ok(textOf(billsEl).includes('Not loaded yet — connect to see this cycle.'),
+      'a scope never loaded says so offline');
+    assert.ok(scopeSelect().children.some((o) => o.value === '2026-09'),
+      'and the dropdown still offers the way back');
+    await pickScope('2026-09');
+    assert.ok(textOf(billsEl).includes('Rent'), 'back on the cached cycle');
   }
 
   // ── a silent refresh must not steal a waiting sign-in's callback (spec

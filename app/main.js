@@ -6,6 +6,7 @@ import { enqueue, drain } from './queue.js';
 import * as api from './api.js';
 import { currentAuth, refresh, signIn } from './auth.js';
 import { entryFrom, validateEntry, editFields, renderEntry, renderPending, renderRecent, renderLog, renderConn, renderLedgers, nextRetryDelay } from './ui.js';
+import { renderBills, billsKey, SWAP_PAYDAY, SWAP_CYCLE } from './bills.js';
 
 // memoryStore()'s shape, over the real IndexedDB functions — queue.js and
 // this module don't need to know the difference.
@@ -40,6 +41,25 @@ let voidArmed = false;
 // it reset. Updated on every `input` (boot, below) and set outright when the
 // form's purpose changes; null means the form's own blank defaults.
 let draft = null;
+// The Bills tab (stage 3 spec §2–§4). `tab` is which of the two panels
+// shows. In `bills`: `mode` is 'cycle' or 'payday'; `scopes` is the scope
+// last opened in each mode ('' until the server has named the latest), so
+// swapping modes offline comes back to something cached; `options` is the
+// dropdown list the server last sent for each mode, kept because a scope
+// never loaded has no view to read one from; `view` is the scope on screen,
+// from the server or the cache; `loading` a fetch in flight; `error` the
+// last refusal or failed load, shown on the bills hint line; `busy` the
+// online-only action in flight ('carry' or 'new'); `editingNote` the row
+// whose note editor is open, and `noteDraft` what is typed there, kept
+// across repaints as `draft` is for the entry form.
+let tab = 'ledger';
+const bills = {
+  mode: 'cycle', scopes: { cycle: '', payday: '' }, options: { cycle: [], payday: [] },
+  view: null, loading: false, error: '', busy: '', editingNote: null, noteDraft: '',
+};
+// Which bills request is still wanted. A reply that lands after the person
+// has moved to another scope is for a view nobody is looking at any more.
+let billsSeq = 0;
 const conn = { online: navigator.onLine, syncing: false, at: null, error: '' };
 
 // navigator.onLine goes true the moment the OS sees an interface, which is
@@ -82,7 +102,9 @@ function render() {
     account = null;
   }
 
-  if (log) {
+  if (tab === 'bills') {
+    renderBills({ bills, queue, conn });
+  } else if (log) {
     renderLog({ log, conn, queue, ledger: view ? view.ledger : '' });
   } else {
     // conn travels too: when a sync fails, the form's own hint is where the
@@ -93,6 +115,7 @@ function render() {
     renderPending(queue, view ? view.ledger : '', view && view.accounts.find((a) => a.name === account));
     renderRecent({ view, account, queue, editing }); // the selected account's last-synced rows, plus its own pending ones
   }
+  renderTabs();
   renderConn(conn);
   renderLedgers({ view, conn }); // #ledger-select is fixed in index.html's topbar, like #conn
   // bootstrap.data.user is already on the wire (Code.gs's getBootstrap) and
@@ -102,6 +125,16 @@ function render() {
   // render functions.
   const whoami = document.getElementById('whoami');
   if (whoami) whoami.textContent = view && view.user ? view.user : '';
+}
+
+/** The Ledger | Bills tab bar (spec §2), and which panel shows. Both tabs
+    and both panels are fixed in index.html, like #conn. */
+function renderTabs() {
+  const onBills = tab === 'bills';
+  document.getElementById('screen').hidden = onBills;
+  document.getElementById('bills').hidden = !onBills;
+  document.getElementById('tab-ledger').setAttribute('aria-selected', String(!onBills));
+  document.getElementById('tab-bills').setAttribute('aria-selected', String(onBills));
 }
 
 function hint(message) {
@@ -539,6 +572,97 @@ export async function switchLedger(name) {
   }
 }
 
+/** Puts a bills view on screen and keeps the dropdown list it came with. */
+function showBills(data) {
+  bills.view = data;
+  if (data) bills.options[bills.mode] = (bills.mode === 'payday' ? data.paydays : data.cycles) || [];
+}
+
+/** So the app reopens on this tab, view and scope after a reload (spec §3). */
+function rememberBills() {
+  return putView('bills:last', { tab, mode: bills.mode, scopes: bills.scopes });
+}
+
+/** Shows and caches a bills view the server sent, under the scope the
+    server named. For '' that is the latest, which is the key a later
+    offline open looks for. */
+async function keepBills(data) {
+  const scope = (bills.mode === 'payday' ? data.payday : data.cycle) || '';
+  bills.scopes[bills.mode] = scope;
+  showBills(data);
+  if (scope) await putView(billsKey(bills.mode, scope), data);
+  await rememberBills();
+}
+
+/** Asks the server for the scope on screen. Returns the envelope, so each
+    caller reports a failure its own way. */
+async function fetchBills(token) {
+  const seq = ++billsSeq;
+  const mode = bills.mode;
+  const scope = bills.scopes[mode];
+  const res = mode === 'payday'
+    ? await api.call('payday', { payday: scope }, token)
+    : await api.call('bills', { cycle: scope }, token);
+  // Superseded: the person moved on, so there is nothing to show or report.
+  if (seq !== billsSeq) return { ok: true };
+  if (res.ok) await keepBills(res.data);
+  return res;
+}
+
+/** Opens the scope in `bills`: the cached copy at once, then the server's
+    when online (spec §3). Offline, a scope never loaded has no view, and
+    renderBills says so. */
+async function loadBills() {
+  billsSeq += 1; // whatever was in flight was for the scope being left
+  const scope = bills.scopes[bills.mode];
+  showBills(scope ? await getView(billsKey(bills.mode, scope)) : null);
+  bills.error = '';
+  bills.editingNote = null;
+  bills.loading = navigator.onLine;
+  render();
+  if (!navigator.onLine) return;
+  try {
+    const auth = await currentAuth();
+    const res = auth && auth.token
+      ? await fetchBills(auth.token)
+      : { ok: false, kind: 'auth', error: 'Sign in again to see the bills.' };
+    if (!res.ok) {
+      if (res.kind === 'auth') conn.needsAuth = true; // same signal sync() arms
+      bills.error = res.error || 'Could not load the bills.';
+    }
+  } finally {
+    bills.loading = false;
+    if (tab === 'bills') render();
+  }
+}
+
+/** A tap on the tab bar. Like the Apps Script app's showView, changing tab
+    closes the log and leaves edit mode. */
+async function setTab(which) {
+  if (which === tab) return;
+  tab = which;
+  log = null;
+  leaveEditMode();
+  await rememberBills();
+  if (tab === 'bills') await loadBills();
+  else render();
+}
+
+/** The scope dropdown: a cycle or payday, or the swap to the other view,
+    which comes back to that view's last-opened scope. */
+async function onScope(value) {
+  if (value === SWAP_PAYDAY) bills.mode = 'payday';
+  else if (value === SWAP_CYCLE) bills.mode = 'cycle';
+  else bills.scopes[bills.mode] = value;
+  await rememberBills();
+  await loadBills();
+}
+
+function onBillsChange(event) {
+  const t = event.target;
+  if (t.id === 'bills-scope') onScope(t.value);
+}
+
 export async function boot() {
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(() => {}); // offline-first still works if this fails
@@ -589,16 +713,30 @@ export async function boot() {
   document.getElementById('screen').addEventListener('keydown', onScreenKeydown);
   document.getElementById('conn').addEventListener('click', onConnClick);
   document.getElementById('ledger-select').addEventListener('change', (e) => switchLedger(e.target.value));
+  document.getElementById('tab-ledger').addEventListener('click', () => setTab('ledger'));
+  document.getElementById('tab-bills').addEventListener('click', () => setTab('bills'));
+  document.getElementById('bills').addEventListener('change', onBillsChange);
   // renderLedgers alongside renderConn, not a full render(): going offline
   // must disable the switcher on the spot (the other books' accounts are
   // not cached — leaving it live is the same lie as a status line
   // claiming a sync that never happened), not whenever the next unrelated
   // render happens to run.
-  window.addEventListener('online', () => { conn.online = true; clearRetry(); renderConn(conn); renderLedgers({ view, conn }); if (log) render(); sync(); });
-  window.addEventListener('offline', () => { conn.online = false; clearRetry(); renderConn(conn); renderLedgers({ view, conn }); if (log) render(); });
+  window.addEventListener('online', () => { conn.online = true; clearRetry(); renderConn(conn); renderLedgers({ view, conn }); if (log || tab === 'bills') render(); sync(); });
+  window.addEventListener('offline', () => { conn.online = false; clearRetry(); renderConn(conn); renderLedgers({ view, conn }); if (log || tab === 'bills') render(); });
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && navigator.onLine) sync();
   });
+
+  // Reopens on the tab, view and scopes last used (spec §3). Only the
+  // cached copy here: the sync just below refetches the open scope.
+  const last = await getView('bills:last');
+  if (last) {
+    tab = last.tab === 'bills' ? 'bills' : 'ledger';
+    bills.mode = last.mode === 'payday' ? 'payday' : 'cycle';
+    bills.scopes = { cycle: '', payday: '', ...last.scopes };
+  }
+  const lastScope = bills.scopes[bills.mode];
+  if (tab === 'bills' && lastScope) showBills(await getView(billsKey(bills.mode, lastScope)));
 
   view = await getView('bootstrap');
   queue = await store.listQueue();

@@ -317,3 +317,198 @@ body {
   margin-top: 12px;
 }
 .linkish.danger { color: var(--out); }
+
+/* ── bills (stage 3) — carried from the sibling app ── */
+
+.views {
+  display: flex;
+  gap: 20px;
+  padding: 14px var(--pad) 0;
+}
+.view-tab {
+  min-height: 32px;
+  padding: 0 0 8px;
+  font: 400 11px var(--display);
+  text-transform: uppercase;
+  letter-spacing: var(--track);
+  color: var(--muted);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+}
+.view-tab[aria-selected="true"] {
+  color: var(--ink);
+  font-weight: 500;
+  border-bottom-color: var(--ink);
+}
+
+.bill-name { font-size: 15px; }
+
+/* Method is a tag, not a colour. The old sheet used red alone to mean cash,
+   which is invisible to anyone who cannot separate the two hues. */
+.tag {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  border: 0.5px solid var(--hairline);
+}
+.tag[data-method="cash"] { color: var(--out); border-color: currentColor; }
+
+.ticks { flex: 0 0 auto; display: flex; gap: 10px; }
+.ticks label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.ticks input { width: 20px; height: 20px; margin: 0; accent-color: var(--ink); }
+.tick-at { font-size: 10px; line-height: 1; }
+
+.bar {
+  height: 2px;
+  margin: 2px 0 8px;
+  background: var(--hairline);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.bar > i { display: block; height: 100%; background: var(--ink); }
+
+.totals {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 18px var(--pad);
+  border-top: 0.5px solid var(--hairline);
+  font-size: 14px;
+}
+.totals-list {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px 12px;
+  margin: 0;
+}
+.totals dt { color: var(--muted); }
+.totals dd { margin: 0; }
+.totals .grand { font-weight: 500; }
+/* Stands in for the sibling app's decorative ring: the same number, as text. */
+.totals-pct { flex: 0 0 auto; font: 400 22px var(--display); }
+
+.banner {
+  margin: 0;
+  padding: 10px var(--pad);
+  border-top: 0.5px solid var(--hairline);
+  border-bottom: 0.5px solid var(--hairline);
+  background: var(--surface);
+  color: var(--out);
+  font-size: 13px;
+}
+.empty {
+  padding: 22px var(--pad);
+  border-top: 0.5px solid var(--hairline);
+  border-bottom: 0.5px solid var(--hairline);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.bill-card {
+  margin: 10px var(--pad);
+  border: 0.5px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  overflow: hidden;
+}
+.bill-card .bill-head,
+.bill-card .sched,
+.bill-card .bill-foot,
+.bill-card .bill-note {
+  padding-left: 14px;
+  padding-right: 14px;
+}
+.bill-card .bill-head { border-top: none; padding-top: 14px; }
+.bill-card .bill-note { padding-bottom: 14px; }
+
+.bill-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 12px var(--pad) 4px;
+  border-top: 0.5px solid var(--hairline);
+  background: var(--surface);
+}
+.bill-head .bill-name { flex: 1 1 auto; font-size: 15px; }
+.bill-status { flex: 0 0 auto; font-size: 11px; color: var(--muted); }
+.bill-status[data-s="Overdue"] { color: var(--out); }
+.bill-status[data-s="Fully funded"] { color: var(--in); }
+
+.bill-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 12px;
+  padding: 10px var(--pad) 16px 28px;
+  background: var(--surface);
+  font-size: 12px;
+}
+.note-text {
+  flex: 1 1 220px;
+  min-width: 0;
+  padding: 2px 0;
+  text-align: left;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.note-text[data-empty="false"] {
+  color: var(--muted);
+  text-decoration: none;
+  white-space: pre-wrap;
+}
+.carry { flex: 0 0 auto; color: var(--muted); }
+.carry-btn {
+  min-height: 34px;
+  padding: 7px 14px;
+  font: 400 12px var(--sans);
+  color: var(--ink);
+  background: var(--surface);
+  border: 0.5px solid var(--hairline);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.carry-btn:disabled { opacity: 0.5; cursor: default; }
+/* 16px, not the 13px around it: iOS zooms the page on focus below 16px. */
+.note-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 8px 10px;
+  font: 400 16px var(--sans);
+  color: var(--ink);
+  background: var(--well);
+  border: none;
+  border-radius: var(--radius-sm);
+  resize: vertical;
+}
+
+.sched {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 6px var(--pad) 6px 28px;
+  background: var(--surface);
+  font-size: 13px;
+}
+.sched-day { flex: 0 0 auto; color: var(--muted); width: 62px; }
+.sched-amt { flex: 1 1 auto; }
+.bill-foot {
+  padding: 4px var(--pad) 12px 28px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12px;
+}
+#bills-hint { padding: 0 var(--pad); }

@@ -25,7 +25,14 @@
     <span class="conn" id="conn"></span>
     <span class="whoami" id="whoami"></span>
   </div>
-  <main id="screen"></main>
+  <div class="views" role="tablist">
+    <button type="button" class="view-tab" id="tab-ledger" role="tab" aria-selected="true" aria-controls="screen">Ledger</button>
+    <button type="button" class="view-tab" id="tab-bills" role="tab" aria-selected="false" aria-controls="bills">Bills</button>
+  </div>
+  <main id="screen" role="tabpanel"></main>
+  <!-- Filled by app/bills.js's renderBills; shown in place of #screen while
+       the Bills tab is open. -->
+  <section class="bills" id="bills" role="tabpanel" hidden></section>
   <footer id="foot"></footer>
 </div>
 

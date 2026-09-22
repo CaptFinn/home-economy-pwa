@@ -986,6 +986,42 @@ const { enqueue } = await import('./app/queue.js');
     await settle();
     assert.equal((await db.listQueue()).length, 0, 'Discard drops it');
     assert.ok(!textOf(billsEl).includes('could not be found'), 'and it leaves the list');
+
+    // ── Carry and Start go straight to the server, online only (spec §4.3) ──
+    navigator.onLine = true;
+    fireWindow('online'); // its sync finds an empty queue: bootstrap, then the scope
+    await settle();
+    const carryBtn = () => find(billsEl, (el) => el.dataset.carryRow === '6');
+    assert.equal(carryBtn().disabled, false, 'online, Carry is live');
+
+    answers.carryBill = { ok: false, kind: 'conflict', error: 'That bill is already in the next cycle.' };
+    billsEl.dispatch('click', { target: carryBtn() });
+    await settle();
+    assert.ok(textOf(billsEl).includes('already in the next cycle'), "a refusal shows the server's message");
+    assert.equal(carryBtn().disabled, false, 'and re-enables the button');
+
+    const carried = structuredClone(fresh);
+    carried.rows[1].carried = true;
+    answers.carryBill = { ok: true, data: carried };
+    billsEl.dispatch('click', { target: carryBtn() });
+    await settle();
+    assert.ok(textOf(billsEl).includes('In 2026-10 ✓'), 'a carried bill says where it went');
+    assert.equal((await db.getView('bills:cycle:2026-09')).rows[1].carried, true, 'and the returned view is cached');
+    assert.deepEqual(sent.filter((b) => b.op === 'carryBill').map((b) => b.args),
+      [{ cycle: '2026-09', row: 6 }, { cycle: '2026-09', row: 6 }], 'carry names the cycle and the row');
+    assert.equal((await db.listQueue()).length, 0, 'and never touches the queue');
+
+    answers.newCycle = { ok: true, data: { ...cycleView, cycle: '2026-10', cycles: ['2026-10', '2026-09', '2026-08'],
+                                           rows: [], totals: { billed: 0, funded: 0, remaining: 0, pending: 0 } } };
+    billsEl.dispatch('click', { target: document.getElementById('bills-newcycle') });
+    await settle();
+    assert.deepEqual([sent.at(-1).op, sent.at(-1).args], ['newCycle', { cycle: '2026-10' }],
+      'Start asks for the cycle after the one on screen');
+    assert.ok(textOf(billsEl).includes('Start 2026-11'), 'the new cycle is shown, and Start moves on');
+    assert.ok(await db.getView('bills:cycle:2026-10'), 'cached under its own key');
+
+    navigator.onLine = false;
+    fireWindow('offline');
   }
 
   // ── a silent refresh must not steal a waiting sign-in's callback (spec

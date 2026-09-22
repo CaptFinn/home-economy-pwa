@@ -6,7 +6,7 @@ import { enqueue, drain } from './queue.js';
 import * as api from './api.js';
 import { currentAuth, refresh, signIn } from './auth.js';
 import { entryFrom, validateEntry, editFields, renderEntry, renderPending, renderRecent, renderLog, renderConn, renderLedgers, nextRetryDelay } from './ui.js';
-import { renderBills, overlayQueued, billsKey, SWAP_PAYDAY, SWAP_CYCLE } from './bills.js';
+import { renderBills, overlayQueued, billsKey, SWAP_PAYDAY, SWAP_CYCLE, nextCycle } from './bills.js';
 
 // memoryStore()'s shape, over the real IndexedDB functions — queue.js and
 // this module don't need to know the difference.
@@ -737,6 +737,45 @@ async function saveNote() {
   await queueBill('setBillNotes', { cycle: bills.view.cycle, row: r.row, name: r.name, text: bills.noteDraft });
 }
 
+/** Carry and Start next cycle go straight to the server, never through
+    the queue (spec §4.3): both add rows, the server re-derives every
+    precondition inside its lock, and queueing them would only widen the
+    window for a stale decision. Both answer with a cycle view, which is
+    shown and cached. Their buttons are disabled offline and signed out;
+    the guard here is the second line. */
+async function billsAction(kind, op, args, fallback) {
+  if (bills.busy || !navigator.onLine || conn.needsAuth) return;
+  bills.busy = kind;
+  bills.error = '';
+  render();
+  try {
+    const auth = await currentAuth();
+    const res = auth && auth.token
+      ? await api.call(op, args, auth.token)
+      : { ok: false, kind: 'auth', error: 'Sign in again to continue.' };
+    if (res.ok) {
+      billsSeq += 1; // a load still in flight is older than this answer
+      bills.mode = 'cycle';
+      await keepBills(res.data);
+    } else {
+      if (res.kind === 'auth') conn.needsAuth = true;
+      bills.error = res.error || fallback;
+    }
+  } finally {
+    bills.busy = '';
+    render();
+  }
+}
+
+function onCarry(row) {
+  if (bills.view) billsAction('carry', 'carryBill', { cycle: bills.view.cycle, row }, 'Could not carry that bill.');
+}
+
+function onStart() {
+  const next = bills.view && nextCycle(bills.view.cycle);
+  if (next) billsAction('new', 'newCycle', { cycle: next }, 'Could not start that cycle.');
+}
+
 function onBillsClick(event) {
   const t = event.target;
   const discard = t.closest('[data-remove-id]');
@@ -744,7 +783,10 @@ function onBillsClick(event) {
   const note = t.closest('[data-note-row]');
   if (note) { openNote(Number(note.dataset.noteRow)); return; }
   if (t.closest('#note-cancel')) { bills.editingNote = null; render(); return; }
-  if (t.closest('#note-save')) saveNote();
+  if (t.closest('#note-save')) { saveNote(); return; }
+  const carry = t.closest('[data-carry-row]');
+  if (carry) { onCarry(Number(carry.dataset.carryRow)); return; }
+  if (t.closest('#bills-newcycle')) onStart();
 }
 
 export async function boot() {

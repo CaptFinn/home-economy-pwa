@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import * as fmt from './app/fmt.js';
 import { memoryStore } from './app/db.js';
 import { enqueue, drain, pendingFor } from './app/queue.js';
+import { overlayQueued, billsKey, nextCycle } from './app/bills.js';
 
 assert.equal(fmt.peso(1500), '₱1,500.00', 'pesos get a sign-free peso format');
 assert.equal(fmt.peso(0), '₱0.00', 'zero formats');
@@ -258,3 +259,63 @@ import { nextRetryDelay, entryFrom, connLabel, directedAmount, pendingBalance, v
 }
 
 console.log('ui self-check passed');
+
+{
+  assert.equal(billsKey('cycle', '2026-09'), 'bills:cycle:2026-09', 'a cycle scope key');
+  assert.equal(billsKey('payday', '2026-09-15'), 'bills:payday:2026-09-15', 'a payday scope key');
+
+  assert.equal(nextCycle('2026-09'), '2026-10', 'the next cycle');
+  assert.equal(nextCycle('2026-12'), '2027-01', 'December rolls the year');
+  assert.equal(nextCycle('2026-09-15'), '', 'a payday is not a cycle');
+  assert.equal(nextCycle('2026-13'), '', 'nor is a month that does not exist');
+  assert.equal(nextCycle(''), '', 'nor is nothing');
+
+  const view = {
+    cycle: '2026-09', payers: ['Vin', 'Venice'],
+    rows: [{ row: 5, name: 'Rent', notes: '', status: 'Partially funded', progress: 1875,
+             schedule: [{ payday: '2026-09-30', paid: [false, false] }] }],
+    totals: { billed: 7500, funded: 1875, remaining: 5625, pending: 0 },
+  };
+  const tick = (at, funded, args = {}) => ({ id: 't' + at, op: 'setBillFunded', state: 'pending', at,
+    args: { cycle: '2026-09', row: 5, name: 'Rent', payday: '2026-09-30', payer: 'Venice', funded, ...args } });
+  const box = (v) => v.rows[0].schedule[0];
+
+  let out = overlayQueued(view, [tick(1, true), tick(2, false)]);
+  assert.deepEqual(box(out).paid, [false, false], 'the newest pending tick wins: an untick after a tick');
+  assert.deepEqual(box(out).queued, [false, true], 'and only that box is marked');
+  out = overlayQueued(view, [tick(1, false), tick(2, true)]);
+  assert.deepEqual(box(out).paid, [false, true], 'a tick after an untick');
+
+  out = overlayQueued(view, [{ ...tick(1, true), state: 'parked' }]);
+  assert.deepEqual(box(out).queued, [false, false], 'a parked tick is not drawn: the server refused it');
+  out = overlayQueued(view, [tick(1, true, { name: 'Water' })]);
+  assert.deepEqual(box(out).queued, [false, false], 'a tick for another bill on the same row is not drawn');
+
+  const note = (at, text, state = 'pending') => ({ id: 'n' + at, op: 'setBillNotes', state, at,
+    args: { cycle: '2026-09', row: 5, name: 'Rent', text } });
+  out = overlayQueued(view, [note(1, 'GCash'), note(2, 'GCash 0917')]);
+  assert.equal(out.rows[0].notes, 'GCash 0917', 'the newest pending note wins');
+  assert.equal(out.rows[0].notesQueued, true, 'marked as queued');
+  out = overlayQueued(view, [note(1, 'GCash', 'parked')]);
+  assert.equal(out.rows[0].notes, '', 'a parked note is not drawn');
+  assert.equal(out.rows[0].notesQueued, false, 'nor marked');
+
+  out = overlayQueued(view, [tick(1, true), note(2, 'x')]);
+  assert.deepEqual(out.totals, view.totals, 'totals stay the server\'s');
+  assert.equal(out.rows[0].progress, 1875, 'and so does progress');
+  assert.equal(out.rows[0].status, 'Partially funded', 'and status');
+  assert.deepEqual(box(view).paid, [false, false], 'the cached view itself is never mutated');
+
+  const payday = {
+    payday: '2026-09-15', payers: ['Vin', 'Venice'],
+    rows: [{ row: 9, name: 'Internet', cycle: '2026-08', paid: [false, false] }],
+    totals: { each: 674.5, cash: 0, digital: 674.5, all: 1349 },
+  };
+  out = overlayQueued(payday, [tick(1, true, { cycle: '2026-08', row: 9, name: 'Internet', payday: '2026-09-15', payer: 'Vin' })]);
+  assert.deepEqual(out.rows[0].paid, [true, false], "the payday view matches on the row's own cycle");
+  assert.deepEqual(out.rows[0].queued, [true, false], 'and marks the box');
+
+  assert.equal(overlayQueued(null, [tick(1, true)]), null, 'no view, nothing to draw over');
+}
+
+console.log('bills self-check passed');

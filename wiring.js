@@ -1011,8 +1011,25 @@ const { enqueue } = await import('./app/queue.js');
       [{ cycle: '2026-09', row: 6 }, { cycle: '2026-09', row: 6 }], 'carry names the cycle and the row');
     assert.equal((await db.listQueue()).length, 0, 'and never touches the queue');
 
+    // ── an answer that lands after the person moved on must not undo their
+    // navigation (fix round 1): the scope select stays enabled while busy
+    // (carried row 6 has already lost its own Carry button, so this reuses
+    // billsAction's other caller, Start, to exercise the same staleness
+    // guard); the stale answer's view is cached for next time but never
+    // shown, and bills.mode is left alone ─────────────────────────────────
     answers.newCycle = { ok: true, data: { ...cycleView, cycle: '2026-10', cycles: ['2026-10', '2026-09', '2026-08'],
                                            rows: [], totals: { billed: 0, funded: 0, remaining: 0, pending: 0 } } };
+    billsEl.dispatch('click', { target: document.getElementById('bills-newcycle') });
+    // Deliberately not awaited before the swap: the point is to move the
+    // person elsewhere while the Start above is still in flight.
+    scopeSelect().value = SWAP_PAYDAY;
+    billsEl.dispatch('change', { target: scopeSelect() });
+    await settle();
+    assert.ok(!textOf(billsEl).includes('Start 2026-11'),
+      "a superseded Start's view does not override the scope the person moved to");
+    assert.ok(await db.getView('bills:cycle:2026-10'), 'but the returned view is still cached for next time');
+    await pickScope(SWAP_CYCLE);
+
     billsEl.dispatch('click', { target: document.getElementById('bills-newcycle') });
     await settle();
     assert.deepEqual([sent.at(-1).op, sent.at(-1).args], ['newCycle', { cycle: '2026-10' }],

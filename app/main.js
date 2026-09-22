@@ -742,9 +742,14 @@ async function saveNote() {
     precondition inside its lock, and queueing them would only widen the
     window for a stale decision. Both answer with a cycle view, which is
     shown and cached. Their buttons are disabled offline and signed out;
-    the guard here is the second line. */
+    the guard here is the second line. The scope select stays enabled
+    while busy, so the person can navigate away before the answer lands —
+    `seq` catches that the way fetchBills's does: superseded, the view is
+    still cached for next time, but never shown, and a refusal for a scope
+    nobody is looking at must not land on the one they are. */
 async function billsAction(kind, op, args, fallback) {
   if (bills.busy || !navigator.onLine || conn.needsAuth) return;
+  const seq = ++billsSeq;
   bills.busy = kind;
   bills.error = '';
   render();
@@ -754,10 +759,13 @@ async function billsAction(kind, op, args, fallback) {
       ? await api.call(op, args, auth.token)
       : { ok: false, kind: 'auth', error: 'Sign in again to continue.' };
     if (res.ok) {
-      billsSeq += 1; // a load still in flight is older than this answer
-      bills.mode = 'cycle';
-      await keepBills(res.data);
-    } else {
+      if (seq === billsSeq) {
+        bills.mode = 'cycle';
+        await keepBills(res.data);
+      } else {
+        await putView(billsKey('cycle', res.data.cycle), res.data);
+      }
+    } else if (seq === billsSeq) {
       if (res.kind === 'auth') conn.needsAuth = true;
       bills.error = res.error || fallback;
     }

@@ -283,3 +283,44 @@ network. `./check.sh` already covers the rest.
    entries. Confirm **Load 50 more** appends older rows with sensible
    running balances. Offline, confirm the log shows the cached rows and says
    older entries need a connection, rather than showing a button.
+
+---
+
+# Stage 3 runbook — bills
+
+**No sheet change and no new Script Property.** Every bill op was already
+in `Api.gs`'s op map. The one server change is the row guard (`rowMatches_`
+in `Bills.gs`), which ships as version 12 of the existing `Api-deployment`
+**before** this client goes live: same /exec URL, so `config.js` does not
+change. The Apps Script app is unaffected: it never sends a bill name, and
+its ticks and notes behave as before.
+
+`sw.js`'s `CACHE` is bumped to `home-economy-v14`, so an installed phone
+picks up the new code on its next load (close and reopen the app once if
+the tab bar does not appear).
+
+## Verify
+
+1. **A tick from each phone.** Vin ticks a box, Venice ticks another. Then
+   Vin ticks one of *Venice's* boxes: in the Bill Tracker tab its `Funded`
+   entry records **Vin** as `by`. The hover title on a laptop says the same.
+2. **An offline tick.** Airplane mode, tick a box: it shows ticked and
+   marked *pending*, and the progress line does not move. Reconnect: it
+   syncs without a tap, the mark clears, and the progress updates.
+3. **An offline note.** Airplane mode, edit a bill's note and save: it shows
+   with *pending*. Reconnect: it syncs, and the sheet's `Notes` cell has it.
+4. **Carry.** On a fully funded bill, tap `Carry to YYYY-MM →`: the card now
+   reads `In YYYY-MM ✓`, and the bill is in the next cycle in the sheet
+   with a blank amount and due date. Offline, the button is disabled with a
+   hint saying why.
+5. **Start next cycle.** From the latest cycle, tap `Start YYYY-MM`: the new
+   cycle opens, holding every bill not already carried.
+6. **The row guard.** Airplane mode, tick a box on a bill. In the Bill
+   Tracker tab, delete a row **above** that bill. Reconnect: the tick is
+   parked at the top of the Bills tab with "That bill could not be found.
+   Reload and try again.", and **no other bill's `Funded` cell changed**.
+   Discard it.
+7. **Stage 2 check 7, still unreported:** a parked ledger item can be
+   discarded, and discarding it does not touch the sheet.
+8. **Reopen.** Leave the app on the Bills tab's payday view, close it and
+   reopen: it comes back on that tab, view and payday.

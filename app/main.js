@@ -6,7 +6,7 @@ import { enqueue, drain } from './queue.js';
 import * as api from './api.js';
 import { currentAuth, refresh, signIn } from './auth.js';
 import { entryFrom, validateEntry, editFields, renderEntry, renderPending, renderRecent, renderLog, renderConn, renderLedgers, nextRetryDelay } from './ui.js';
-import { renderBills, billsKey, SWAP_PAYDAY, SWAP_CYCLE } from './bills.js';
+import { renderBills, overlayQueued, billsKey, SWAP_PAYDAY, SWAP_CYCLE } from './bills.js';
 
 // memoryStore()'s shape, over the real IndexedDB functions — queue.js and
 // this module don't need to know the difference.
@@ -196,6 +196,20 @@ function formValues() {
 // impossible from this form, on top of always awaiting the call.
 let submitting = false;
 
+// Every enqueue in this module goes through here, one at a time. enqueue
+// reads the queue's newest `at` and writes one past it, which is not
+// atomic, so two overlapping calls can read the same max and tie, and a
+// tie is broken by random id. For entries that decides the order money
+// lands in; for ticks, which of two quick taps on one box is the newest
+// (spec §4.1). `submitting` still stops a double submit; this stops two
+// different taps racing.
+let enqueued = Promise.resolve();
+function queueOp(op, args) {
+  const next = enqueued.then(() => enqueue(store, op, args));
+  enqueued = next.catch(() => {});
+  return next;
+}
+
 async function onSubmit(event) {
   event.preventDefault();
   if (submitting) return;
@@ -222,8 +236,8 @@ async function onSubmit(event) {
     // Both ride the same queue (spec §5), so an edit made offline is as
     // safe as a new entry. The server re-checks `fp` before writing: an
     // edit that arrives stale is refused and parks, never overwrites.
-    if (open) await enqueue(store, 'updateEntry', { ledger: view.ledger, row: open.row, fp: open.fp, entry });
-    else await enqueue(store, 'addEntry', { entry });
+    if (open) await queueOp('updateEntry', { ledger: view.ledger, row: open.row, fp: open.fp, entry });
+    else await queueOp('addEntry', { entry });
   } finally {
     submitting = false;
     if (submit) submit.disabled = false;
@@ -239,15 +253,17 @@ async function onSubmit(event) {
   if (navigator.onLine) sync(); // fire-and-forget: submit is already done
 }
 
+/** Drops one queued item (Remove, or Discard on either tab). Touches
+    nothing on the server. */
+async function removeItem(id) {
+  await removeQueued(id);
+  queue = await store.listQueue();
+  render();
+}
+
 function onScreenClick(event) {
   const button = event.target.closest('[data-remove-id]');
-  if (button) {
-    removeQueued(button.dataset.removeId).then(async () => {
-      queue = await store.listQueue();
-      render();
-    });
-    return;
-  }
+  if (button) { removeItem(button.dataset.removeId); return; }
 
   const reopenBtn = event.target.closest('[data-reopen-id]');
   if (reopenBtn) { reopen(reopenBtn.dataset.reopenId); return; }
@@ -286,7 +302,7 @@ async function onVoid() {
     // ledger/row/fp are all voidEntry reads. account and label ride along
     // only so the pending list can name the row (ui.js's pendingRow); the
     // server ignores them.
-    await enqueue(store, 'voidEntry', {
+    await queueOp('voidEntry', {
       ledger: view.ledger, row: open.row, fp: open.fp,
       account: open.account, label: open.description || open.source_recipient,
     });
@@ -493,6 +509,20 @@ export async function sync() {
 
     await putView('bootstrap', res.data);
     view = res.data;
+
+    // Spec §4.2: with the Bills tab open, its scope is refetched too, so
+    // pending marks clear against the server's own figures. A failure
+    // leaves the cached view up and says so on the connection line, as a
+    // failed bootstrap does, and does not move the clock.
+    if (tab === 'bills') {
+      const b = await fetchBills(auth.token);
+      if (!b.ok) {
+        if (b.kind === 'auth') conn.needsAuth = true;
+        conn.error = b.error || 'Could not load the bills.';
+        return;
+      }
+    }
+
     conn.error = '';
     clearRetry(); // a good sync resets the backoff
 
@@ -661,6 +691,60 @@ async function onScope(value) {
 function onBillsChange(event) {
   const t = event.target;
   if (t.id === 'bills-scope') onScope(t.value);
+  if (t.dataset && t.dataset.tickRow !== undefined) onTick(t);
+}
+
+/** A tick or a note, queued like an entry even online (spec §4.1): one
+    path to the server. The queued value shows at once, marked pending. */
+async function queueBill(op, args) {
+  await queueOp(op, args);
+  queue = await store.listQueue();
+  render();
+  if (navigator.onLine) sync();
+}
+
+/** A tick sets a value rather than toggling one, so a second tap simply
+    queues the opposite value, and the newest is what shows and lands. */
+function onTick(box) {
+  const d = box.dataset;
+  queueBill('setBillFunded', {
+    cycle: d.cycle, row: Number(d.tickRow), name: d.name,
+    payday: d.payday, funded: !!box.checked, payer: d.payer,
+  });
+}
+
+function openNote(row) {
+  const shown = overlayQueued(bills.view, queue);
+  const r = shown && shown.rows.find((x) => x.row === row);
+  if (!r) return;
+  bills.editingNote = row;
+  bills.noteDraft = r.notes || ''; // the newest queued text, when there is one
+  render();
+}
+
+async function saveNote() {
+  const r = bills.view && bills.view.rows.find((x) => x.row === bills.editingNote);
+  if (!r) return;
+  // The server's own limit (validateNotes_), checked here only as a
+  // courtesy: an over-long note would otherwise park after the fact.
+  if (bills.noteDraft.trim().length > 500) {
+    bills.error = 'Notes can be at most 500 characters.';
+    render();
+    return;
+  }
+  bills.error = '';
+  bills.editingNote = null;
+  await queueBill('setBillNotes', { cycle: bills.view.cycle, row: r.row, name: r.name, text: bills.noteDraft });
+}
+
+function onBillsClick(event) {
+  const t = event.target;
+  const discard = t.closest('[data-remove-id]');
+  if (discard) { removeItem(discard.dataset.removeId); return; }
+  const note = t.closest('[data-note-row]');
+  if (note) { openNote(Number(note.dataset.noteRow)); return; }
+  if (t.closest('#note-cancel')) { bills.editingNote = null; render(); return; }
+  if (t.closest('#note-save')) saveNote();
 }
 
 export async function boot() {
@@ -716,6 +800,10 @@ export async function boot() {
   document.getElementById('tab-ledger').addEventListener('click', () => setTab('ledger'));
   document.getElementById('tab-bills').addEventListener('click', () => setTab('bills'));
   document.getElementById('bills').addEventListener('change', onBillsChange);
+  document.getElementById('bills').addEventListener('click', onBillsClick);
+  document.getElementById('bills').addEventListener('input', (e) => {
+    if (e.target.id === 'note-input') bills.noteDraft = e.target.value;
+  });
   // renderLedgers alongside renderConn, not a full render(): going offline
   // must disable the switcher on the spot (the other books' accounts are
   // not cached — leaving it live is the same lie as a status line

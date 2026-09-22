@@ -421,6 +421,22 @@ const { enqueue } = await import('./app/queue.js');
   assert.ok(text.includes('includes pending'), 'and the balance note stays: it explains a figure');
 }
 
+// ── bill items never reach the ledger's list or balances (stage 3 spec §4.4) ──
+{
+  const billItems = [
+    { id: 'b1', op: 'setBillFunded', state: 'pending',
+      args: { cycle: '2026-09', row: 5, name: 'Rent', payday: '2026-09-30', funded: true, payer: 'Venice' } },
+    { id: 'b2', op: 'setBillNotes', state: 'parked', error: 'Notes can be at most 500 characters.',
+      args: { cycle: '2026-09', row: 5, name: 'Rent', text: 'x' } },
+  ];
+  assert.equal(ui.pendingBalance(billItems, 'Rent', 'Bills'), 0, 'a queued tick is not money in any account');
+  ui.renderEntry({ view: null, queue: [], conn: { online: true } });
+  ui.renderPending(billItems, 'Bills');
+  assert.equal(textOf(document.getElementById('pending-list')), '', "the ledger's pending list skips bill items");
+  ui.renderPending(billItems, '');
+  assert.equal(textOf(document.getElementById('pending-list')), '', 'even before the first sync, with no ledger yet');
+}
+
 // ── main.js's actual wiring: the submit handler and a failed sync ─────
 // Everything above exercises ui.js's pure and DOM-drawing halves directly.
 // Two of stage 1's three shipped bugs — the client-signed amount, and the
@@ -892,6 +908,84 @@ const { enqueue } = await import('./app/queue.js');
       'and the dropdown still offers the way back');
     await pickScope('2026-09');
     assert.ok(textOf(billsEl).includes('Rent'), 'back on the cached cycle');
+
+    // ── ticks and notes go through the queue, online or not (spec §4.1) ──
+    const box = (row, payday, payer) => find(billsEl, (el) =>
+      el.dataset.tickRow === row && el.dataset.payday === payday && el.dataset.payer === payer);
+    const tickBox = async (row, payday, payer) => {
+      const b = box(row, payday, payer);
+      b.checked = true; // what a real checkbox already shows the instant `change` fires
+      billsEl.dispatch('change', { target: b });
+      await settle();
+    };
+
+    await tickBox('5', '2026-09-30', 'Venice');
+    let queued = await db.listQueue();
+    assert.deepEqual(queued.find((i) => i.op === 'setBillFunded').args,
+      { cycle: '2026-09', row: 5, name: 'Rent', payday: '2026-09-30', funded: true, payer: 'Venice' },
+      'an offline tick queues the bill, the payday, whose share, and the name the server re-checks');
+    assert.equal(box('5', '2026-09-30', 'Venice').checked, true, 'the box shows its queued value');
+    assert.ok(textOf(box('5', '2026-09-30', 'Venice').parent).includes('pending'), 'marked pending');
+    assert.ok(textOf(billsEl).includes('₱1,875.00 / ₱7,500.00'), "progress stays the server's until it syncs");
+
+    billsEl.dispatch('click', { target: find(billsEl, (el) => el.dataset.noteRow === '5') });
+    const noteInput = document.getElementById('note-input');
+    assert.ok(noteInput, 'tapping Add note opens the editor');
+    noteInput.value = 'GCash 0917';
+    billsEl.dispatch('input', { target: noteInput });
+    billsEl.dispatch('click', { target: document.getElementById('note-save') });
+    await settle();
+    queued = await db.listQueue();
+    assert.deepEqual(queued.find((i) => i.op === 'setBillNotes').args,
+      { cycle: '2026-09', row: 5, name: 'Rent', text: 'GCash 0917' }, 'a note is queued with its bill');
+    assert.ok(textOf(billsEl).includes('GCash 0917 · pending'), 'and shows its queued text, pending');
+
+    await pickScope(SWAP_PAYDAY);
+    await tickBox('9', '2026-09-15', 'Vin');
+    queued = await db.listQueue();
+    assert.deepEqual(queued.filter((i) => i.op === 'setBillFunded').pop().args,
+      { cycle: '2026-08', row: 9, name: 'Internet', payday: '2026-09-15', funded: true, payer: 'Vin' },
+      "from the payday view, the row's own cycle travels, not a blank");
+    await pickScope(SWAP_CYCLE);
+
+    document.getElementById('tab-ledger').dispatch('click');
+    await settle();
+    const ledgerText = textOf(document.getElementById('screen'));
+    assert.ok(!ledgerText.includes('Rent') && !ledgerText.includes('Internet'),
+      "the ledger's pending list ignores queued bill items");
+    assert.ok(!ledgerText.includes('pending'), 'and no balance claims to include them');
+    document.getElementById('tab-bills').dispatch('click');
+    await settle();
+
+    // ── a sync with the tab open refetches it (spec §4.2); a refused tick
+    // parks with Discard (§4.4) ─────────────────────────────────────────
+    const fresh = structuredClone(cycleView);
+    fresh.rows[0].schedule[1].paid = [false, true];
+    fresh.rows[0].notes = 'GCash 0917';
+    answers.bills = { ok: true, data: fresh };
+    answers.setBillFunded = (args) => (args.row === 9
+      ? { ok: false, kind: 'conflict', error: 'That bill could not be found. Reload and try again.' }
+      : { ok: true, data: {} });
+    answers.setBillNotes = { ok: true, data: {} };
+    sent.length = 0;
+    navigator.onLine = true;
+    fireWindow('online'); // the real trigger: conn.online, then sync()
+    await settle();
+    navigator.onLine = false;
+    fireWindow('offline'); // and clears the retry the parked item would leave running
+
+    assert.deepEqual(sent.map((b) => b.op), ['setBillFunded', 'setBillNotes', 'setBillFunded', 'bootstrap', 'bills'],
+      'the queue drains oldest first, then bootstrap, then the open scope');
+    assert.equal(sent[4].args.cycle, '2026-09', 'the refetch asks for the scope on screen');
+    assert.equal(box('5', '2026-09-30', 'Venice').checked, true, "the server's own figures now carry the tick");
+    assert.ok(!textOf(billsEl).includes('pending'), 'and every pending mark is gone');
+    assert.ok(textOf(billsEl).includes('That bill could not be found'), "the refused tick is listed with the server's message");
+    const discard = find(billsEl, (el) => el.dataset.removeId !== undefined);
+    assert.equal(discard.textContent, 'Discard', 'offering Discard');
+    billsEl.dispatch('click', { target: discard });
+    await settle();
+    assert.equal((await db.listQueue()).length, 0, 'Discard drops it');
+    assert.ok(!textOf(billsEl).includes('could not be found'), 'and it leaves the list');
   }
 
   // ── a silent refresh must not steal a waiting sign-in's callback (spec

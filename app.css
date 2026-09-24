@@ -2,9 +2,10 @@
    the two front ends run side by side and must not look like different
    apps. Only the pieces this stage uses are copied: the palette, the body
    and wrap shell, the topbar, form fields, the submit button, hints, and the
-   .txn row styling the pending-entry list (a later task) will reuse. Bills,
-   the account rail and desktop mode are not here yet (stages 3 and 4); the
-   log and the edit controls arrived with stage 2, at the foot of this file. */
+   .txn row styling the pending-entry list (a later task) will reuse. The
+   hero and the account rail followed after stage 3; desktop mode is stage 4.
+   The log and the edit controls arrived with stage 2, at the foot of this
+   file. */
 
 :root {
   /* Seamless: the page and its panels are the same white, and hairlines do
@@ -114,6 +115,84 @@ body {
    dead control (offline, or nothing to switch between) still looked
    perfectly tappable — same pattern as .submit:disabled below. */
 .ledger-select:disabled { opacity: 0.4; }
+
+/* ── hero balance ───────────────────────────────────── */
+
+/* One figure carries the screen. clamp() rather than a media query, because
+   what overflows here is the string (₱1,234,567.89), not the viewport. */
+.hero { padding: 30px var(--pad) 20px; }
+/* The display face, not .fig's — this figure is alone on its line, so it wants
+   character over column alignment. Declared after .fig so it wins the tie. */
+.hero-balance {
+  font-family: var(--display);
+  font-size: clamp(32px, 12vw, 46px);
+  font-weight: 300;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+}
+.hero-label {
+  margin-top: 10px;
+  font-family: var(--display);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: var(--track);
+  color: var(--muted);
+}
+
+/* ── account rail ───────────────────────────────────── */
+
+.rail {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 0 var(--pad) 4px;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.rail::-webkit-scrollbar { display: none; }
+
+/* Pills, not cards — the balance that made each card tall now lives in the
+   hero. The per-account figure stays on the pill though: dropping it would
+   cost the six-balance glance the rail exists to give. */
+.card {
+  flex: 0 0 auto;
+  min-height: 36px;
+  scroll-snap-align: start;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 14px 8px 16px;
+  position: relative;
+  text-align: left;
+  font: inherit;
+  color: var(--ink);
+  background: var(--surface);
+  border: 0.5px solid var(--hairline);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+/* the spine: the only hue left in the chrome, and the account's own */
+.card::before {
+  content: "";
+  position: absolute;
+  left: 7px; top: 9px; bottom: 9px;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--card-color);
+}
+.card[aria-pressed="true"] {
+  color: var(--bg);
+  background: var(--ink);
+  border-color: var(--ink);
+}
+.card-name { font-size: 13px; }
+.card[aria-pressed="true"] .card-name { font-weight: 500; }
+.card-balance { font-size: 12px; color: var(--muted); }
+.card[aria-pressed="true"] .card-balance { color: var(--bg); opacity: 0.7; }
+
+/* The pending note under the hero figure, when unsent entries are in it. */
+.hero .txn-balance { margin-top: 4px; }
 
 /* ── entry form ─────────────────────────────────────── */
 

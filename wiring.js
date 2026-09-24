@@ -50,7 +50,9 @@ export function makeDom() {
       children: [],
       attributes: {},
       dataset: {},
-      style: {},
+      // setProperty for the --card-color custom property the account pills
+      // set; plain assignments (style.width) land on the same object.
+      style: { setProperty(k, v) { this[k] = v; } },
       className: '',
       value: '',
       disabled: false,
@@ -419,6 +421,8 @@ const { enqueue } = await import('./app/queue.js');
   assert.equal(count('edit pending'), 1, 'an edit to a row on screen is marked on that row only');
   assert.ok(text.includes('Old rent'), 'a void against a row not on screen stays in the list');
   assert.ok(text.includes('includes pending'), 'and the balance note stays: it explains a figure');
+  assert.equal(textOf(document.querySelector('.hero-balance')), '₱289.00',
+    "the hero is the selected account's balance plus its unsent entry, the first account by default");
 }
 
 // ── bill items never reach the ledger's list or balances (stage 3 spec §4.4) ──
@@ -544,33 +548,41 @@ const { enqueue } = await import('./app/queue.js');
   assert.match(document.getElementById('conn').textContent, /^synced \d{2}:\d{2}$/,
     'boot wired a real, successful sync before either scenario below touches it');
 
-  // ── Recent defaults to the first account, and a real tap (or Enter) on a
-  // balances-list row switches it — through main.js's actual listeners, not
+  // ── Recent defaults to the first account, and a real tap (or Enter) on an
+  // account pill switches it — through main.js's actual listeners, not
   // ui.renderRecent called directly (that is the block above this one) ────
   {
-    const bootedText = textOf(document.getElementById('screen'));
+    const screenEl = () => document.getElementById('screen');
+    const pill = (name) => find(screenEl(), (el) => el.dataset.account === name);
+    const bootedText = textOf(screenEl());
     assert.ok(bootedText.includes('Rice'), 'the first account is selected on boot, before any tap');
     assert.ok(!bootedText.includes('Meralco'), 'and only its own recent row shows');
+    assert.equal(textOf(screenEl().querySelector('.hero-balance')), '₱300.00', 'the hero shows the selected account');
+    assert.equal(textOf(screenEl().querySelector('.hero-label')), 'Groceries · balance', 'and names it');
+    assert.equal(pill('Groceries').tagName, 'BUTTON', 'each account is a pill button');
+    assert.equal(pill('Groceries').getAttribute('aria-pressed'), 'true', 'the selected pill is pressed');
+    assert.equal(pill('Electricity').getAttribute('aria-pressed'), 'false', 'the others are not');
+    assert.ok(textOf(pill('Electricity')).includes('₱500.00'), "each pill carries its own balance");
 
     // A click's `target` is often a nested child, not the row itself — this
     // dispatches on the title inside the Electricity row, the way a real tap
     // would, so the assertion also covers closest() actually walking up to
     // the ancestor that carries data-account, not just matching on itself.
-    const electricityRow = find(document.getElementById('screen'), (el) => el.dataset.account === 'Electricity');
-    assert.ok(electricityRow, 'the balances list marks each row with the account it belongs to');
-    const electricityTitle = electricityRow.querySelector('.txn-title');
-    document.getElementById('screen').dispatch('click', { target: electricityTitle });
+    document.getElementById('screen').dispatch('click', { target: pill('Electricity').querySelector('.card-name') });
 
     const afterClick = textOf(document.getElementById('screen'));
-    assert.ok(afterClick.includes('Meralco'), 'tapping a balances row switches Recent to that account');
+    assert.ok(afterClick.includes('Meralco'), 'tapping a pill switches Recent to that account');
     assert.ok(!afterClick.includes('Rice'), 'and the previous account no longer shows');
+    assert.equal(textOf(screenEl().querySelector('.hero-balance')), '₱500.00', 'the hero follows the tap');
+    assert.equal(pill('Electricity').getAttribute('aria-pressed'), 'true', 'and so does the pressed pill');
+    assert.equal(document.getElementById('f-account').value, 'Electricity',
+      'the pill and the Account field are one selection, as in the sibling app');
 
-    // Back to Groceries, this time by keyboard — the row is a div, not a
-    // button, so Enter has to be wired up on purpose rather than arriving free.
-    const groceriesRow = find(document.getElementById('screen'), (el) => el.dataset.account === 'Groceries');
-    document.getElementById('screen').dispatch('keydown', { target: groceriesRow, key: 'Enter' });
+    // Back to Groceries, this time by keyboard.
+    document.getElementById('screen').dispatch('keydown', { target: pill('Groceries'), key: 'Enter' });
     const afterKey = textOf(document.getElementById('screen'));
-    assert.ok(afterKey.includes('Rice'), 'Enter on a balances row selects it too, not just a click');
+    assert.ok(afterKey.includes('Rice'), 'Enter on a pill selects it too, not just a click');
+    assert.equal(document.getElementById('f-account').value, 'Groceries', 'and fills the Account field');
   }
 
   // ── the full log through main.js: View all, a page, a failed page, the

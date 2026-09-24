@@ -109,7 +109,7 @@ function render() {
   } else {
     // conn travels too: when a sync fails, the form's own hint is where the
     // reason belongs — that is the line someone reads when the button is dead.
-    renderEntry({ view, queue, conn, editing, voidArmed }); // rebuilds #screen, including an empty pending slot
+    renderEntry({ view, account, queue, conn, editing, voidArmed }); // rebuilds #screen, including an empty pending slot
     if (draft) fillForm(draft);
     // Fills that slot in: this book's items only, minus what Recent already says.
     renderPending(queue, view ? view.ledger : '', view && view.accounts.find((a) => a.name === account));
@@ -395,19 +395,23 @@ async function loadMore() {
   }
 }
 
-/** A tap (or Enter/Space — onScreenKeydown below) on a row in the balances
-    list. Nothing here talks to the server, so unlike the branch above,
-    there is nothing to await: just a new account in state and a re-render. */
+/** A tap (or Enter/Space — onScreenKeydown below) on an account pill.
+    Nothing here talks to the server, so unlike the branch above, there is
+    nothing to await: just a new account in state and a re-render. The pill
+    and the Account field are one selection, as in the sibling app, so the
+    field takes the name too, through the draft so a later repaint keeps it. */
 function selectAccount(name) {
   if (name !== account) leaveEditMode();
   account = name;
   render();
+  draft = { ...formValues(), account: name };
+  document.getElementById('f-account').value = name;
 }
 
-/** The keyboard equivalent of onScreenClick's account-row branch — the row
-    is a div, not a button, so it gets its own Enter/Space handling rather
-    than one for free (same reason the sibling app's tappable rows carry an
-    onkeydown of their own). */
+/** Enter/Space on a tappable row, which is a div, not a button (same
+    reason the sibling app's tappable rows carry an onkeydown of their own).
+    The account pills are buttons and would get this free; handling them
+    here too is harmless, since preventDefault stops the second click. */
 function onScreenKeydown(event) {
   if (event.key !== 'Enter' && event.key !== ' ') return;
   const txnRow = event.target.closest('[data-row]');

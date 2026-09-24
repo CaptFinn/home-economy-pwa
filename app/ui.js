@@ -147,6 +147,15 @@ function input(id, attrs) {
     added in — labelled as such, since it is only ever an estimate; the
     server's own sum on read is the number of record (queue.js's
     pendingFor). */
+/** An account's own colour, from app.css's --acct-<slug> variables; one
+    with no colour of its own falls through to neutral. As the sibling app's
+    acctColor. */
+function acctColor(name) {
+  const slug = String(name).toLowerCase().replace(/'/g, '')
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  return 'var(--acct-' + slug + ', var(--acct-neutral))';
+}
+
 export function renderEntry(state) {
   const screen = document.getElementById('screen');
   screen.textContent = '';
@@ -164,45 +173,54 @@ export function renderEntry(state) {
   const queue = state.queue || [];
 
   if (view.accounts.length) {
-    const balances = document.createElement('div');
-    balances.id = 'balances';
+    // The hero and the account rail, as in the sibling app (spec §7.1): one
+    // figure for the selected account, and a pill per account that selects
+    // it. main.js's onScreenClick/onScreenKeydown read data-account (via
+    // .closest) — a tap here never talks to the server.
+    const selected = view.accounts.find((a) => a.name === state.account) || view.accounts[0];
+    const withPending = (a) => a.balance + pendingBalance(queue, a.name, view.ledger);
+
+    const hero = document.createElement('div');
+    hero.className = 'hero';
+    const figure = document.createElement('div');
+    figure.className = 'hero-balance fig';
+    figure.textContent = peso(withPending(selected));
+    hero.appendChild(figure);
+    const label = document.createElement('div');
+    label.className = 'hero-label';
+    label.textContent = selected.name + ' · balance';
+    hero.appendChild(label);
+    // Only when something is actually queued for this account (round-2
+    // review, C5): otherwise the figure is the server's own.
+    if (withPending(selected) !== selected.balance) {
+      const note = document.createElement('div');
+      note.className = 'txn-balance';
+      note.textContent = 'includes pending';
+      hero.appendChild(note);
+    }
+    screen.appendChild(hero);
+
+    const rail = document.createElement('div');
+    rail.className = 'rail';
+    rail.setAttribute('aria-label', 'Accounts');
     view.accounts.forEach((a) => {
-      const row = document.createElement('div');
-      row.className = 'txn';
-      // Read by main.js's onScreenClick/onScreenKeydown (via .closest) to
-      // pick which account renderRecent shows next — a tap here never talks
-      // to the server, so there is nothing to disable or wait for.
-      row.dataset.account = a.name;
-      row.tabIndex = 0;
-      const body = document.createElement('div');
-      body.className = 'txn-body';
-      const title = document.createElement('div');
-      title.className = 'txn-title';
-      title.textContent = a.name;
-      body.appendChild(title);
-      row.appendChild(body);
-
-      const right = document.createElement('div');
-      right.className = 'txn-right';
-      const amt = document.createElement('div');
-      amt.className = 'txn-amount fig';
-      const pending = pendingBalance(queue, a.name, view.ledger);
-      amt.textContent = peso(a.balance + pending);
-      right.appendChild(amt);
-      // Only when something is actually queued for THIS account (round-2
-      // review, C5) — otherwise every account row claimed to include
-      // pending money whether or not any was queued.
-      if (pending !== 0) {
-        const note = document.createElement('div');
-        note.className = 'txn-balance';
-        note.textContent = 'includes pending';
-        right.appendChild(note);
-      }
-      row.appendChild(right);
-
-      balances.appendChild(row);
+      const pill = document.createElement('button');
+      pill.type = 'button';
+      pill.className = 'card';
+      pill.dataset.account = a.name;
+      pill.setAttribute('aria-pressed', String(a === selected));
+      pill.style.setProperty('--card-color', acctColor(a.name));
+      const name = document.createElement('span');
+      name.className = 'card-name';
+      name.textContent = a.name;
+      pill.appendChild(name);
+      const amt = document.createElement('span');
+      amt.className = 'card-balance fig';
+      amt.textContent = peso(withPending(a));
+      pill.appendChild(amt);
+      rail.appendChild(pill);
     });
-    screen.appendChild(balances);
+    screen.appendChild(rail);
   }
 
   const form = document.createElement('form');

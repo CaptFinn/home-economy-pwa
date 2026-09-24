@@ -67,7 +67,7 @@ async function storeCredential(response) {
 // sign-in, so refresh() stands aside while this is set.
 let signingIn = false;
 
-/** Renders Google's button into #screen and resolves once the person signs
+/** Renders Google's button into #ledger-main and resolves once the person signs
     in, with the auth already saved to IndexedDB. */
 export async function signIn() {
   signingIn = true;
@@ -93,10 +93,12 @@ async function promptSignIn() {
       // screen that never moves.
       callback: (response) => storeCredential(response).then(resolve, reject),
     });
-    const screen = document.getElementById('screen');
-    screen.textContent = '';
+    // #ledger-main, not #screen: #screen holds the two fixed regions
+    // (stage 4 spec §3.2), and clearing it would remove them.
+    const host = document.getElementById('ledger-main');
+    host.textContent = '';
     const slot = document.createElement('div');
-    screen.appendChild(slot);
+    host.appendChild(slot);
     google.accounts.id.renderButton(slot, { type: 'standard' });
   });
 }

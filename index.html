@@ -29,7 +29,13 @@
     <button type="button" class="view-tab" id="tab-ledger" role="tab" aria-selected="true" aria-controls="screen">Ledger</button>
     <button type="button" class="view-tab" id="tab-bills" role="tab" aria-selected="false" aria-controls="bills">Bills</button>
   </div>
-  <main id="screen" role="tabpanel"></main>
+  <main id="screen" role="tabpanel">
+    <!-- The two regions the Desktop layout places side by side (stage 4
+         spec §3.2): the form side and the history side. Fixed here, like
+         #screen itself; the renderers rebuild what is inside them. -->
+    <div id="ledger-main"></div>
+    <div id="ledger-side"></div>
+  </main>
   <!-- Filled by app/bills.js's renderBills; shown in place of #screen while
        the Bills tab is open. -->
   <section class="bills" id="bills" role="tabpanel" hidden></section>

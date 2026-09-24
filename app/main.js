@@ -104,16 +104,21 @@ function render() {
 
   if (tab === 'bills') {
     renderBills({ bills, queue, conn });
-  } else if (log) {
-    renderLog({ log, conn, queue, ledger: view ? view.ledger : '' });
   } else {
-    // conn travels too: when a sync fails, the form's own hint is where the
-    // reason belongs — that is the line someone reads when the button is dead.
-    renderEntry({ view, account, queue, conn, editing, voidArmed }); // rebuilds #screen, including an empty pending slot
-    if (draft) fillForm(draft);
-    // Fills that slot in: this book's items only, minus what Recent already says.
-    renderPending(queue, view ? view.ledger : '', view && view.accounts.find((a) => a.name === account));
-    renderRecent({ view, account, queue, editing }); // the selected account's last-synced rows, plus its own pending ones
+    // The log takes the whole screen (stage 2 spec §3.2), so the form side
+    // is hidden while it is open.
+    const formSide = !log;
+    document.getElementById('ledger-main').hidden = !formSide;
+    if (formSide) {
+      // conn travels too: when a sync fails, the form's own hint is where the
+      // reason belongs — that is the line someone reads when the button is dead.
+      renderEntry({ view, account, queue, conn, editing, voidArmed }); // rebuilds #ledger-main, including an empty pending slot
+      if (draft) fillForm(draft);
+      // Fills that slot in: this book's items only, minus what Recent already says.
+      renderPending(queue, view ? view.ledger : '', view && view.accounts.find((a) => a.name === account));
+    }
+    if (log) renderLog({ log, conn, queue, ledger: view ? view.ledger : '' });
+    else renderRecent({ view, account, queue, editing }); // the selected account's last-synced rows, plus its own pending ones
   }
   renderTabs();
   renderConn(conn);
@@ -823,7 +828,7 @@ export async function boot() {
   // that reason too.
   if (!(await currentAuth())) {
     try {
-      await signIn(); // renders Google's button into #screen itself
+      await signIn(); // renders Google's button into #ledger-main itself
     } catch (err) {
       // signIn() rejects if Google's library never loads at all — offline
       // on first run, an ad-blocker, corporate DNS (round-2 review, C3).

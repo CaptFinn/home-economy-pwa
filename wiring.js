@@ -134,11 +134,18 @@ export function makeDom() {
   // without that second step document.querySelector/All, which walks the
   // body's actual children rather than the byId map, searched an empty
   // tree and returned null for every one of them.
-  for (const id of ['screen', 'conn', 'whoami', 'foot', 'ledger-select', 'tab-ledger', 'tab-bills', 'bills']) {
+  // Each under the parent it has in index.html (null: the body), parents
+  // first, so textOf(#screen) still reads both ledger regions.
+  const FIXED = [
+    ['screen', null], ['ledger-main', 'screen'], ['ledger-side', 'screen'],
+    ['conn', null], ['whoami', null], ['foot', null], ['ledger-select', null],
+    ['tab-ledger', null], ['tab-bills', null], ['bills', null],
+  ];
+  for (const [id, parent] of FIXED) {
     const el = make('div');
     el.id = id;
     byId.set(id, el);
-    bodyEl.appendChild(el);
+    (parent ? byId.get(parent) : bodyEl).appendChild(el);
   }
   return { document, make, byId };
 }
@@ -251,8 +258,8 @@ const { enqueue } = await import('./app/queue.js');
   }];
   ui.renderPending(queue);
   const screen = document.getElementById('screen');
-  assert.equal(document.getElementById('pending-list'), screen.firstChild,
-    'insertBefore actually placed the new slot at the front of #screen');
+  assert.equal(document.getElementById('pending-list'), document.getElementById('ledger-main').firstChild,
+    'insertBefore actually placed the new slot at the front of the form side');
   const text3 = textOf(screen);
   assert.ok(text3.includes('Groceries'), 'a pending entry is listed');
   assert.ok(text3.includes('pending'), 'and marked pending');
@@ -423,6 +430,27 @@ const { enqueue } = await import('./app/queue.js');
   assert.ok(text.includes('includes pending'), 'and the balance note stays: it explains a figure');
   assert.equal(textOf(document.querySelector('.hero-balance')), '₱289.00',
     "the hero is the selected account's balance plus its unsent entry, the first account by default");
+}
+
+// ── the two ledger regions (stage 4 spec §3.2; Review Focus 4) ────────
+{
+  const rent = { name: 'Rent', balance: 500, txns: [
+    { row: 3, fp: 'r3', date: '2026-09-10', account: 'Rent', source_recipient: 'Landlord',
+      description: 'Sept', amount: -500, balance: 500 }] };
+  const view = { user: 'vin', ledger: 'Bills', ledgers: ['Bills'], accounts: [rent] };
+  const mainEl = document.getElementById('ledger-main');
+  const sideEl = document.getElementById('ledger-side');
+  ui.renderEntry({ view, account: 'Rent', queue: [], conn: { online: true } });
+  ui.renderPending([], 'Bills', rent);
+  ui.renderRecent({ view, account: 'Rent', queue: [] });
+  ui.renderRecent({ view, account: 'Rent', queue: [] });
+  assert.ok(mainEl.querySelector('#entry-form'), 'the form is drawn in the form side');
+  assert.equal(sideEl.querySelectorAll('.recent').length, 1, 'Recent is in the side region, once, however often it is drawn');
+  assert.equal(document.getElementById('pending-list').hidden, true, 'an empty pending list draws no empty panel');
+  ui.renderLog({ log: { account: 'Rent', rows: rent.txns, hasMore: false, loading: false, error: '' },
+                 conn: { online: true }, queue: [], ledger: 'Bills' });
+  assert.ok(sideEl.querySelector('#log') && !sideEl.querySelector('.recent'), 'the log takes the side region in place of Recent');
+  assert.ok(mainEl.querySelector('#entry-form'), 'and leaves the form side alone');
 }
 
 // ── bill items never reach the ledger's list or balances (stage 3 spec §4.4) ──

@@ -139,7 +139,7 @@ function input(id, attrs) {
   return el;
 }
 
-/** Draws the New Entry form into #screen: date, type, account (with a
+/** Draws the New Entry form into #ledger-main: date, type, account (with a
     datalist of names already seen — an account is a value, not a fixed
     list, so typing a new one is allowed), source/recipient, description,
     amount, and the submit button. Account balances come from the cached
@@ -157,17 +157,20 @@ function acctColor(name) {
 }
 
 export function renderEntry(state) {
-  const screen = document.getElementById('screen');
-  screen.textContent = '';
+  const main = document.getElementById('ledger-main');
+  main.textContent = '';
 
   // A slot for renderPending to fill in, ahead of the form. Kept even
-  // though this call just cleared #screen, so renderEntry and renderPending
-  // can be called in either order without one wiping the other's part of
-  // the screen (main.js always calls this one first, but nothing enforces
-  // that from in here).
+  // though this call just cleared #ledger-main, so renderEntry and
+  // renderPending can be called in either order without one wiping the
+  // other's part of the screen (main.js always calls this one first, but
+  // nothing enforces that from in here). Hidden until it has rows: an
+  // empty white panel is noise (stage 4 spec §4).
   const pendingSlot = document.createElement('div');
   pendingSlot.id = 'pending-list';
-  screen.appendChild(pendingSlot);
+  pendingSlot.className = 'pending-list panel';
+  pendingSlot.hidden = true;
+  main.appendChild(pendingSlot);
 
   const view = state.view || { accounts: [] };
   const queue = state.queue || [];
@@ -198,7 +201,7 @@ export function renderEntry(state) {
       note.textContent = 'includes pending';
       hero.appendChild(note);
     }
-    screen.appendChild(hero);
+    main.appendChild(hero);
 
     const rail = document.createElement('div');
     rail.className = 'rail';
@@ -220,12 +223,12 @@ export function renderEntry(state) {
       pill.appendChild(amt);
       rail.appendChild(pill);
     });
-    screen.appendChild(rail);
+    main.appendChild(rail);
   }
 
   const form = document.createElement('form');
   form.id = 'entry-form';
-  form.className = 'entry';
+  form.className = 'entry panel';
   form.autocomplete = 'off';
   // Same heading and button wording as the sibling app in both modes
   // (spec §3.3): the same two people use both.
@@ -320,7 +323,7 @@ export function renderEntry(state) {
   }
   form.appendChild(hint);
 
-  screen.appendChild(form);
+  main.appendChild(form);
 }
 
 /** What a still-pending queued item says about itself, per op. */
@@ -413,12 +416,13 @@ function pendingRow(item) {
     even then — its message and its Reopen/Discard live on this list, not on
     the row. */
 export function renderPending(queue, ledger, recent) {
-  const screen = document.getElementById('screen');
+  const main = document.getElementById('ledger-main');
   let slot = document.getElementById('pending-list');
   if (!slot) {
     slot = document.createElement('div');
     slot.id = 'pending-list';
-    screen.insertBefore(slot, screen.firstChild);
+    slot.className = 'pending-list panel';
+    main.insertBefore(slot, main.firstChild);
   }
   slot.textContent = '';
 
@@ -426,6 +430,7 @@ export function renderPending(queue, ledger, recent) {
     .filter((i) => ledgerOf(i) === ledger && !(recent && shownInRecent(i, recent)))
     .slice().reverse() // newest first
     .forEach((item) => slot.appendChild(pendingRow(item)));
+  slot.hidden = !slot.children.length;
 }
 
 /** One confirmed row from bootstrap's own `txns` — same shape as pendingRow
@@ -492,18 +497,20 @@ function txnRow(t, ctx) {
     rendering (carried defect §7, item 3: reconcile, don't accumulate, so
     this task does not add a second way of saying "pending").
 
-    Called after renderEntry, which already wiped #screen for this repaint,
-    so — like renderPending's slot — the section here is always rebuilt
+    It clears #ledger-side itself, so the section here is always rebuilt
     fresh rather than patched; there is nothing to reuse across renders. */
 export function renderRecent(state) {
-  const screen = document.getElementById('screen');
+  // Its own region now (stage 4 spec §3.2), so it clears it itself rather
+  // than relying on renderEntry's wipe.
+  const side = document.getElementById('ledger-side');
+  side.textContent = '';
   const view = state.view || { accounts: [] };
   const queue = state.queue || [];
   const acct = view.accounts.find((a) => a.name === state.account);
   if (!acct) return; // no view yet, or the selected name is gone from this ledger
 
   const section = document.createElement('section');
-  section.className = 'recent';
+  section.className = 'recent panel';
   section.id = 'recent';
 
   const head = document.createElement('div');
@@ -530,23 +537,23 @@ export function renderRecent(state) {
   const ctx = { queue, ledger: view.ledger, editingRow: state.editing ? state.editing.row : null };
   acct.txns.forEach((t) => section.appendChild(txnRow(t, ctx)));
 
-  screen.appendChild(section);
+  side.appendChild(section);
 }
 
 /** The full log (spec §3.2): one account's whole history, fifty rows a page,
-    replacing the home screen while it is open. The rows arrive with their
+    in the side region, in place of Recent. The rows arrive with their
     running balance already attached — page two's balances depend on every
     newer row, which only the server has, so nothing here recomputes them.
 
     Offline there is no `Load 50 more` at all, only a line saying why: a
     button that can only fail is the lie spec §2 rule 1 forbids. */
 export function renderLog(state) {
-  const screen = document.getElementById('screen');
-  screen.textContent = '';
+  const side = document.getElementById('ledger-side');
+  side.textContent = '';
   const log = state.log;
 
   const section = document.createElement('section');
-  section.className = 'log';
+  section.className = 'log panel';
   section.id = 'log';
 
   const head = document.createElement('div');
@@ -592,7 +599,7 @@ export function renderLog(state) {
   }
   section.appendChild(hint);
 
-  screen.appendChild(section);
+  side.appendChild(section);
 }
 
 /** Rebuilds the ledger switcher — #ledger-select, fixed in index.html's

@@ -1,17 +1,16 @@
-/* Carried over from the sibling Apps Script app's Index.html <style> block —
-   the two front ends run side by side and must not look like different
-   apps. Only the pieces this stage uses are copied: the palette, the body
-   and wrap shell, the topbar, form fields, the submit button, hints, and the
-   .txn row styling the pending-entry list (a later task) will reuse. The
-   hero and the account rail followed after stage 3; desktop mode is stage 4.
-   The log and the edit controls arrived with stage 2, at the foot of this
-   file. */
+/* Started as a copy of the sibling Apps Script app's Index.html <style>
+   block — the palette, the body and wrap shell, the topbar, form fields,
+   the submit button, hints, and the .txn row — with the log and edit
+   controls (stage 2), bills (stage 3), and the hero and account rail
+   carried over after it. Stage 4 gave the PWA its own look (an off-white
+   ground, white panels, a new header) and desktop mode, at the foot of
+   this file; from there on the two apps no longer look alike. */
 
 :root {
-  /* Seamless: the page and its panels are the same white, and hairlines do
-     all the dividing. --well is the one step off that ground, for the inset
-     a form field needs to look like something you type into. */
-  --bg:       #ffffff;
+  /* An off-white ground with white panels on it (stage 4 spec §4). --well
+     is the inset a form field needs, inside a white panel, to look like
+     something you type into. */
+  --bg:       #f6f5f2;
   --surface:  #ffffff;
   --well:     #f1f2f5;
   --ink:      #14161a;
@@ -19,6 +18,7 @@
   --hairline: #e8e9ed;
   --in:       #1f8a5b;
   --out:      #b3352a;
+  --warn:     #b4711a; /* the status dot and the account alert, for a lost session */
 
   --acct-account-1: #2563c9;
   --acct-account-2: #6d4ac4;
@@ -36,6 +36,8 @@
   --pad: 16px;
   --radius: 22px;      /* cards and the account pills */
   --radius-sm: 12px;   /* form fields */
+  --radius-panel: 16px;
+  --shadow-panel: 0 1px 3px rgba(20, 22, 26, 0.06), 0 4px 14px rgba(20, 22, 26, 0.04);
   --track: 0.16em;     /* tracking on every small-caps label */
 
   /* The page commits to one visual world — see spec §7. Without this the OS
@@ -70,12 +72,12 @@ body {
 /* ── header ─────────────────────────────────────────── */
 
 .topbar {
+  position: relative; /* anchors the account menu */
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 6px 12px;
-  padding: 16px var(--pad);
+  gap: 12px;
+  padding: 14px var(--pad);
+  background: var(--surface);
   border-bottom: 0.5px solid var(--hairline);
 }
 /* The masthead is the one place spec §7's sentence-case rule is broken on
@@ -87,7 +89,9 @@ body {
   text-transform: uppercase;
   letter-spacing: var(--track);
 }
-.whoami { color: var(--muted); font-size: 12px; }
+/* The name gives way before the connection does on a narrow phone. */
+.whoami { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.whoami:not(:empty) + .conn::before { content: "\00a0·\00a0"; }
 
 /* Copied from the sibling app's Index.html (task 2) so both front ends
    still look alike, drawn caret included — same technique as .field
@@ -196,15 +200,8 @@ body {
 
 /* ── entry form ─────────────────────────────────────── */
 
-/* The form's own inset and hairlines, as in the sibling app. Only .entry h2
-   was carried over in stage 2, which left every field flush to the screen
-   edge on a phone. */
-.entry {
-  background: var(--surface);
-  border-top: 0.5px solid var(--hairline);
-  border-bottom: 0.5px solid var(--hairline);
-  padding: 20px var(--pad) var(--pad);
-}
+/* The form is a .panel (stage 4 spec §4); this is only its inset. */
+.entry { padding: 20px var(--pad) var(--pad); }
 
 /* Date and Type side by side (round-2 review, C5) — copied from the sibling
    app's Index.html, whose .field already carries the bottom margin these
@@ -353,8 +350,7 @@ body {
 
 /* ── new this stage: connection state and the pending queue ── */
 
-.conn { font-size: 11px; color: var(--muted); }
-.conn[data-state="offline"] { color: var(--out); }
+.conn { flex: 0 0 auto; }
 .pending { opacity: 0.65; }
 .pending-mark { font-size: 11px; color: var(--muted); }
 
@@ -411,9 +407,16 @@ body {
 
 .views {
   display: flex;
-  gap: 20px;
-  padding: 14px var(--pad) 0;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 0 var(--pad);
+  background: var(--surface);
+  border-bottom: 0.5px solid var(--hairline);
 }
+/* The tabs sit on the row's bottom edge, so the selected underline meets it. */
+.view-tabs { display: flex; gap: 20px; align-self: stretch; align-items: flex-end; }
+.views .ledger-select { margin-left: auto; }
 .view-tab {
   min-height: 32px;
   padding: 0 0 8px;
@@ -472,7 +475,6 @@ body {
   align-items: center;
   gap: 18px;
   padding: 18px var(--pad);
-  border-top: 0.5px solid var(--hairline);
   font-size: 14px;
 }
 .totals-list {
@@ -485,8 +487,22 @@ body {
 .totals dt { color: var(--muted); }
 .totals dd { margin: 0; }
 .totals .grand { font-weight: 500; }
-/* Stands in for the sibling app's decorative ring: the same number, as text. */
-.totals-pct { flex: 0 0 auto; font: 400 22px var(--display); }
+/* The Apps Script app's ring (stage 4 spec §5), copied from its Index.html. */
+.ring { flex: 0 0 auto; width: 62px; height: 62px; }
+.ring circle {
+  fill: none;
+  stroke-width: 2.5;
+  transform: rotate(-90deg);
+  transform-origin: 50% 50%;
+}
+.ring-track { stroke: var(--hairline); }
+.ring-fill { stroke: var(--ink); stroke-linecap: round; }
+.ring-pct {
+  fill: var(--ink);
+  font: 500 9px var(--display);
+  text-anchor: middle;
+  dominant-baseline: central;
+}
 
 .banner {
   margin: 0;
@@ -506,13 +522,7 @@ body {
   font-size: 14px;
 }
 
-.bill-card {
-  margin: 10px var(--pad);
-  border: 0.5px solid var(--hairline);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  overflow: hidden;
-}
+.bill-card { overflow: hidden; } /* a .panel; its rows keep their own insets */
 .bill-card .bill-head,
 .bill-card .sched,
 .bill-card .bill-foot,
@@ -601,3 +611,164 @@ body {
   font-size: 12px;
 }
 #bills-hint { padding: 0 var(--pad); }
+
+/* ── stage 4: header, account menu, panels, desktop (spec §2–§5) ── */
+
+/* The hidden attribute is display:none in the UA stylesheet, which any
+   author display rule outranks. The regions, pickers and menu all get one,
+   and hidden has to keep winning (as in the Apps Script app). */
+[hidden] { display: none !important; }
+
+.brand { flex: 0 0 auto; width: 28px; height: 28px; }
+.masthead {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+/* The status line: a button, because a tap signs in or syncs. */
+.status {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding: 0;
+  font: 400 12px var(--sans);
+  color: var(--muted);
+  white-space: nowrap;
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.status::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--in);
+}
+.status[data-state="syncing"]::before { background: var(--muted); }
+.status[data-state="offline"]::before { background: var(--out); }
+.status[data-state="offline"] .conn { color: var(--out); }
+.status[data-state="auth"]::before,
+.status[data-state="error"]::before { background: var(--warn); }
+
+.account-btn {
+  position: relative;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  font: 500 13px var(--sans);
+  color: var(--ink);
+  background: var(--surface);
+  border: 0.5px solid var(--hairline);
+  border-radius: 50%;
+  cursor: pointer;
+}
+.account-btn[aria-expanded="true"] { border-color: var(--ink); }
+.account-glyph { width: 16px; height: 16px; }
+#account-initial:not(:empty) + .account-glyph { display: none; }
+/* A lost session shows on the button with the menu closed (spec §2.3). */
+.account-btn[data-alert]::after {
+  content: "";
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  width: 9px;
+  height: 9px;
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  background: var(--warn);
+}
+
+.account-menu {
+  position: absolute;
+  top: calc(100% - 8px);
+  right: var(--pad);
+  z-index: 10;
+  width: 240px;
+  padding: 4px 0;
+  font-size: 13px;
+  background: var(--surface);
+  border: 0.5px solid var(--hairline);
+  border-radius: 14px;
+  box-shadow: 0 8px 28px rgba(20, 22, 26, 0.14);
+}
+.menu-who { margin: 0; padding: 10px 14px; color: var(--muted); }
+.menu-who span { display: block; color: var(--ink); overflow-wrap: anywhere; }
+.menu-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-top: 0.5px solid var(--hairline);
+}
+.menu-item {
+  display: block;
+  width: 100%;
+  padding: 11px 14px;
+  font: inherit;
+  color: var(--ink);
+  text-align: left;
+  background: none;
+  border: none;
+  border-top: 0.5px solid var(--hairline);
+  cursor: pointer;
+}
+.menu-item:disabled { opacity: 0.4; cursor: default; }
+/* Copied from the Apps Script app's .layout-switch. */
+.layout-switch {
+  display: flex;
+  border: 0.5px solid var(--hairline);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.layout-switch button {
+  padding: 4px 8px;
+  font: 500 11px var(--sans);
+  color: var(--muted);
+  background: var(--surface);
+  border: none;
+  cursor: pointer;
+}
+.layout-switch button[aria-pressed="true"] { color: var(--bg); background: var(--ink); }
+
+/* A white block on the off-white ground (spec §4). */
+.panel {
+  margin: 12px var(--pad);
+  background: var(--surface);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-panel);
+  overflow: hidden;
+}
+/* Rows keep their hairlines between them, not around the panel's edge. */
+.panel > .txn:first-child { border-top: none; }
+.panel > .txn:last-child { border-bottom: none; }
+
+/* ── Desktop (spec §3.4): the same elements, placed on a grid. Nothing is
+   measured in JS; hidden still decides what shows. ── */
+body.desktop .wrap { max-width: 1100px; }
+body.desktop #screen,
+body.desktop #bills {
+  display: grid;
+  column-gap: 24px;
+  align-items: start;
+  padding: 4px var(--pad);
+}
+body.desktop #screen { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+body.desktop #bills { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
+body.desktop #bills > .parked-list,
+body.desktop #bills > .banner { grid-column: 1 / -1; }
+body.desktop .bill-rows { grid-column: 1; }
+body.desktop .bills-side { grid-column: 2; position: sticky; top: 16px; }
+/* The grid's padding does the side spacing on Desktop. */
+body.desktop .panel { margin-left: 0; margin-right: 0; }
+body.desktop .hero,
+body.desktop .rail { padding-left: 0; padding-right: 0; }

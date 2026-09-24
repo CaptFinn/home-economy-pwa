@@ -439,6 +439,9 @@ async function loadMore() {
 function selectAccount(name) {
   if (name !== account) leaveEditMode();
   account = name;
+  // On Desktop the rail sits beside an open log; the log is one account's,
+  // so choosing another closes it, as the Apps Script app's selectAccount does.
+  log = null;
   render();
   draft = { ...formValues(), account: name };
   document.getElementById('f-account').value = name;

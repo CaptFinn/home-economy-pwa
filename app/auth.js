@@ -94,9 +94,11 @@ async function promptSignIn() {
       callback: (response) => storeCredential(response).then(resolve, reject),
     });
     // #ledger-main, not #screen: #screen holds the two fixed regions
-    // (stage 4 spec §3.2), and clearing it would remove them.
+    // (stage 4 spec §3.2), and clearing it would remove them. The side is
+    // emptied too, so nothing stale and tappable sits beside the button.
     const host = document.getElementById('ledger-main');
     host.textContent = '';
+    document.getElementById('ledger-side').textContent = '';
     const slot = document.createElement('div');
     host.appendChild(slot);
     google.accounts.id.renderButton(slot, { type: 'standard' });

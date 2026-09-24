@@ -1231,6 +1231,15 @@ const { enqueue } = await import('./app/queue.js');
     globalThis.localStorage = { getItem() { throw new Error('denied'); }, setItem() { throw new Error('denied'); } };
     choose('layout-desktop');
     assert.equal(document.body.classList.contains('desktop'), true, 'a storage that refuses writes still switches, for this visit');
+
+    // On Desktop the pills sit beside an open log, so choosing another
+    // account must not leave the log on the old one (the Apps Script app
+    // closes it, as here).
+    screen.dispatch('click', { target: document.getElementById('view-all') });
+    await settle();
+    screen.dispatch('click', { target: find(mainEl, (el) => el.dataset.account === 'Electricity') });
+    assert.ok(!sideEl.querySelector('#log'), 'choosing another account closes the log');
+    assert.ok(textOf(sideEl).includes('Meralco'), "and the side shows that account's Recent");
     choose('layout-mobile');
     globalThis.localStorage = undefined;
   }
@@ -1256,6 +1265,8 @@ const { enqueue } = await import('./app/queue.js');
     assert.equal(document.getElementById('account-menu').hidden, true, 'the menu closes on its action');
     assert.equal(document.getElementById('bills').hidden, true, "Google's button needs the ledger in view");
     assert.equal(document.getElementById('ledger-main').hidden, false, 'with the region it renders into showing');
+    assert.equal(document.getElementById('ledger-side').children.length, 0,
+      "and nothing stale beside it: a leftover log or Recent under Google's button would still take taps");
 
     fetchImpl = fetchReturning({ ok: true, data: bootstrapView });
     const payload = Buffer.from(JSON.stringify({ email: 'vin@example.test' })).toString('base64url');

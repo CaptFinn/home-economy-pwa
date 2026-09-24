@@ -324,3 +324,46 @@ the tab bar does not appear).
    discarded, and discarding it does not touch the sheet.
 8. **Reopen.** Leave the app on the Bills tab's payday view, close it and
    reopen: it comes back on that tab, view and payday.
+
+---
+
+# Stage 4 runbook — desktop layout and the new look
+
+**No server change, no deploy, no Script Property.** `sw.js`'s `CACHE` is
+bumped to `home-economy-v17`: close and reopen the installed app once on each
+phone to pick it up.
+
+**About deploying the API in later stages.** Never `clasp redeploy` the
+`Api-deployment`: clasp rebuilds a deployment's access from `appsscript.json`,
+which holds the household app's settings (execute as the user accessing,
+anyone with a Google account), and the PWA then gets a 401 with no CORS header
+and reports "No connection" (2026-09-24). `clasp push` and `clasp version` are
+fine; then move `Api-deployment` (the id in `config.js`) to the new version in
+the web editor: **Deploy → Manage deployments → Edit**, and check it still
+says **Execute as: Me** and **Who has access: Anyone**. The stage 3 spec's §5
+and plan's Task 7 say otherwise and are superseded by this note.
+
+## Verify
+
+1. **The phone header.** On both phones: the peso icon, `HOME ECONOMY` over
+   `<name> · synced HH:MM` with a green dot, and the round account button. The
+   tab row has `Ledger | Bills` and, on the right, the ledger picker (Ledger
+   tab) or the cycle picker (Bills tab). Nothing wraps or scrolls sideways.
+2. **The look.** Off-white ground; the form, Recent, the bill cards and the
+   totals are white cards; the balance and the account pills sit on the ground.
+   The Bills totals show the ring with the same percentage as before.
+3. **The account menu.** Tap the button: it shows who is signed in, Layout,
+   and Sync now. Tap outside it, and it closes; open it and tap the button
+   again, and it closes.
+4. **Desktop on the laptop.** Menu → Desktop. The ledger splits in two:
+   balance, pills and form on the left, Recent on the right. View all opens
+   the log on the right; the form on the left still works. Reload: still
+   Desktop. The phones are still on Mobile.
+5. **Desktop Bills.** Bill cards on the left; the ring, totals and Start stay
+   in view on the right while the list scrolls.
+6. **Offline.** Airplane mode: the dot turns red, the line says `offline`, and
+   Sync now is greyed out.
+7. **A lost session.** When the line says `sign in again` (or after signing
+   out of Google in the browser): the account button has an amber dot, the
+   menu offers Sign in again, and signing in from there works — including from
+   the Bills tab.

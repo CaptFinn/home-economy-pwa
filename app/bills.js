@@ -107,6 +107,33 @@ function pct(part, whole) {
   return Math.max(0, Math.min(100, Number(part) / Number(whole) * 100));
 }
 
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const RING_R = 19; // on a 44 viewBox, as the Apps Script app's ringHTML
+
+/** The Apps Script app's progress ring (stage 4 spec §5): a track, and a
+    fill whose dash offset leaves `percent` of the circle drawn, with the
+    figure in the middle. `class` goes through setAttribute: className is
+    read-only on an SVG element. */
+function ring(percent) {
+  const p = Math.round(percent);
+  const svgEl = (tag, attrs) => {
+    const e = document.createElementNS(SVG_NS, tag);
+    Object.entries(attrs).forEach(([k, v]) => e.setAttribute(k, String(v)));
+    return e;
+  };
+  const c = 2 * Math.PI * RING_R;
+  const svg = svgEl('svg', { class: 'ring', viewBox: '0 0 44 44', role: 'img', 'aria-label': p + '% funded' });
+  svg.appendChild(svgEl('circle', { class: 'ring-track', cx: 22, cy: 22, r: RING_R }));
+  svg.appendChild(svgEl('circle', {
+    class: 'ring-fill', cx: 22, cy: 22, r: RING_R,
+    'stroke-dasharray': c.toFixed(2), 'stroke-dashoffset': (c * (1 - p / 100)).toFixed(2),
+  }));
+  const label = svgEl('text', { class: 'ring-pct', x: 22, y: 22 });
+  label.textContent = p + '%';
+  svg.appendChild(label);
+  return svg;
+}
+
 /** A tick's stamp ('YYYY-MM-DD HH:mm', already Manila time) as the day
     shown under its box and the hover line naming who ticked it. Split by
     hand, as fmt.day is: new Date() would read it in the phone's own zone. */
@@ -206,7 +233,7 @@ function noteLine(view, r, ctx) {
 
 /** One card per bill (spec §2.1): head, schedule, progress, note. */
 function billCard(view, r, ctx) {
-  const card = el('div', 'bill-card');
+  const card = el('div', 'bill-card panel');
   const head = el('div', 'bill-head');
   head.appendChild(el('span', 'bill-name', r.name + (r.due_date ? ' · due ' + day(r.due_date) : '')));
   head.appendChild(methodTag(r.method));
@@ -252,11 +279,11 @@ function paydayLine(view, r) {
   return line;
 }
 
-/** The footer figures, as sent. The cycle view's percentage stands in for
-    the Apps Script app's decorative ring (spec §2.3): same number, no SVG. */
+/** The footer figures, as sent. The cycle view leads with the Apps Script
+    app's progress ring (stage 4 spec §5); the payday view has none, as there. */
 function totals(t, isPayday) {
-  const box = el('div', 'totals');
-  if (!isPayday) box.appendChild(el('span', 'totals-pct fig', Math.round(pct(t.funded, t.billed)) + '%'));
+  const box = el('div', 'totals panel');
+  if (!isPayday) box.appendChild(ring(pct(t.funded, t.billed)));
   const rows = isPayday
     ? [['Each of you', t.each], ['Cash', t.cash], ['Digital', t.digital], ['Both of you', t.all, true]]
     : [['Billed', t.billed], ['Funded', t.funded], ['Remaining', t.remaining, true]];
@@ -327,9 +354,14 @@ export function renderBills(state) {
   select.appendChild(swap);
   select.value = scope;
 
-  state.queue
-    .filter((i) => i.state === 'parked' && BILL_OPS.includes(i.op))
-    .forEach((item) => host.appendChild(parkedRow(item)));
+  // Refused items share one panel, and there is no panel when there are
+  // none (stage 4 spec §4).
+  const parked = state.queue.filter((i) => i.state === 'parked' && BILL_OPS.includes(i.op));
+  if (parked.length) {
+    const list = el('div', 'parked-list panel');
+    parked.forEach((item) => list.appendChild(parkedRow(item)));
+    host.appendChild(list);
+  }
 
   const missing = view && !isPayday && view.totals ? view.totals.pending : 0;
   if (missing) {
@@ -337,19 +369,28 @@ export function renderBills(state) {
       + ' an amount or due date — add them in the Bill Tracker tab.'));
   }
 
+  // The list, and beside it on Desktop the figures and actions that stay
+  // in view while it scrolls (stage 4 spec §3.2, §3.4).
+  const rowsEl = el('div', 'bill-rows');
+  const side = el('div', 'bills-side');
+  host.appendChild(rowsEl);
+  host.appendChild(side);
+
   if (!view) {
-    host.appendChild(el('p', 'empty', b.loading ? 'Loading…'
+    rowsEl.appendChild(el('p', 'empty', b.loading ? 'Loading…'
       : state.conn.online ? 'Not loaded yet.'
       : 'Not loaded yet — connect to see this ' + (isPayday ? 'payday.' : 'cycle.')));
   } else if (!view.rows.length) {
-    host.appendChild(el('p', 'empty', 'Nothing here yet.'));
+    rowsEl.appendChild(el('p', 'empty', 'Nothing here yet.'));
   } else if (isPayday) {
-    view.rows.forEach((r) => host.appendChild(paydayLine(view, r)));
-    host.appendChild(totals(view.totals, true));
+    const lines = el('div', 'payday-lines panel');
+    view.rows.forEach((r) => lines.appendChild(paydayLine(view, r)));
+    rowsEl.appendChild(lines);
+    side.appendChild(totals(view.totals, true));
   } else {
     const ctx = { canAct, editingNote: b.editingNote, noteDraft: b.noteDraft };
-    view.rows.forEach((r) => host.appendChild(billCard(view, r, ctx)));
-    host.appendChild(totals(view.totals, false));
+    view.rows.forEach((r) => rowsEl.appendChild(billCard(view, r, ctx)));
+    side.appendChild(totals(view.totals, false));
   }
 
   if (!isPayday && view && view.cycle) {
@@ -357,7 +398,7 @@ export function renderBills(state) {
     const start = button('more', next ? 'Start ' + next : 'Start next cycle');
     start.id = 'bills-newcycle';
     start.disabled = !canAct;
-    host.appendChild(start);
+    side.appendChild(start);
   }
 
   const hint = el('p', 'hint');
@@ -373,5 +414,5 @@ export function renderBills(state) {
   } else if (state.conn.needsAuth) {
     hint.textContent = SIGNED_OUT_HINT;
   }
-  host.appendChild(hint);
+  side.appendChild(hint);
 }

@@ -134,6 +134,7 @@ export function makeDom() {
   const bodyEl = make('body');
   const document = {
     createElement: (tag) => make(tag),
+    createElementNS: (ns, tag) => make(tag),
     getElementById: (id) => byId.get(id) || null,
     querySelector: (sel) => queryAll(bodyEl, sel)[0] || null,
     querySelectorAll: (sel) => queryAll(bodyEl, sel),
@@ -998,7 +999,14 @@ const { enqueue } = await import('./app/queue.js');
     assert.ok(text.includes('₱1,875.00 / ₱7,500.00 · ₱5,625.00 remaining'), "progress, exactly as the server sent it");
     assert.ok(text.includes('Carry to 2026-10 →'), 'a fully funded bill offers to carry');
     assert.ok(text.includes('Start 2026-10'), 'Start names the cycle it will create');
-    assert.ok(text.includes('30%'), 'the totals carry their ratio as a plain percentage');
+    const ringEl = find(billsEl, (e) => e.getAttribute('role') === 'img');
+    assert.equal(ringEl.getAttribute('aria-label'), '30% funded', 'the ring names its figure');
+    assert.ok(textOf(ringEl).includes('30%'), 'and prints it in the middle');
+    const sideEl = billsEl.querySelector('.bills-side');
+    assert.ok(sideEl.querySelector('.totals') && sideEl.querySelector('#bills-newcycle') && sideEl.querySelector('#bills-hint'),
+      'totals, Start and the hint share the side region');
+    assert.equal(billsEl.querySelector('.bill-rows').querySelectorAll('.bill-card').length, 2, 'the cards are in the list region');
+    assert.equal(billsEl.querySelector('.parked-list'), null, 'nothing parked, no empty panel');
     assert.ok(await db.getView('bills:cycle:2026-09'), 'cached under the scope the server named, not under ""');
 
     await pickScope(SWAP_PAYDAY);
@@ -1099,10 +1107,12 @@ const { enqueue } = await import('./app/queue.js');
     assert.ok(textOf(billsEl).includes('That bill could not be found'), "the refused tick is listed with the server's message");
     const discard = find(billsEl, (el) => el.dataset.removeId !== undefined);
     assert.equal(discard.textContent, 'Discard', 'offering Discard');
+    assert.ok(billsEl.querySelector('.parked-list').querySelector('[data-remove-id]'), 'refused items sit together in one panel');
     billsEl.dispatch('click', { target: discard });
     await settle();
     assert.equal((await db.listQueue()).length, 0, 'Discard drops it');
     assert.ok(!textOf(billsEl).includes('could not be found'), 'and it leaves the list');
+    assert.equal(billsEl.querySelector('.parked-list'), null, 'and with nothing left refused, no empty panel stays');
 
     // ── Carry and Start go straight to the server, online only (spec §4.3) ──
     navigator.onLine = true;
@@ -1153,6 +1163,17 @@ const { enqueue } = await import('./app/queue.js');
       'Start asks for the cycle after the one on screen');
     assert.ok(textOf(billsEl).includes('Start 2026-11'), 'the new cycle is shown, and Start moves on');
     assert.ok(await db.getView('bills:cycle:2026-10'), 'cached under its own key');
+
+    // The ring clamps as the bar does: a hand-typed extra tick in the sheet
+    // must not draw it past 100. Drawn directly; main's next render repaints.
+    const { renderBills } = await import('./app/bills.js');
+    renderBills({
+      bills: { mode: 'cycle', scopes: { cycle: '2026-09', payday: '' }, options: { cycle: ['2026-09'], payday: [] },
+               view: { ...cycleView, totals: { billed: 100, funded: 130, remaining: 0, pending: 0 } } },
+      queue: [], conn: { online: true },
+    });
+    assert.equal(find(billsEl, (e) => e.getAttribute('role') === 'img').getAttribute('aria-label'), '100% funded',
+      'the ring never claims more than 100%');
 
     navigator.onLine = false;
     fireWindow('offline');

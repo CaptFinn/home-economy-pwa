@@ -4,7 +4,7 @@
 // it is a POST, and the `req.method !== 'GET'` return below already lets
 // every one of those through untouched, so there is nothing left for a GET
 // branch to guard.
-const CACHE = 'home-economy-v14'; // bump this string to retire the old cache on the next activate
+const CACHE = 'home-economy-v15'; // bump this string to retire the old cache on the next activate
 
 const SHELL = [
   'index.html', 'app.css', 'config.js', 'icon.svg', 'manifest.webmanifest',

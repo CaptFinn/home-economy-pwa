@@ -117,6 +117,16 @@ body {
 
 /* ── entry form ─────────────────────────────────────── */
 
+/* The form's own inset and hairlines, as in the sibling app. Only .entry h2
+   was carried over in stage 2, which left every field flush to the screen
+   edge on a phone. */
+.entry {
+  background: var(--surface);
+  border-top: 0.5px solid var(--hairline);
+  border-bottom: 0.5px solid var(--hairline);
+  padding: 20px var(--pad) var(--pad);
+}
+
 /* Date and Type side by side (round-2 review, C5) — copied from the sibling
    app's Index.html, whose .field already carries the bottom margin these
    halves need, so .row2 itself only has to lay them out. */

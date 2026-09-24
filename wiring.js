@@ -125,7 +125,10 @@ export function makeDom() {
     getElementById: (id) => byId.get(id) || null,
     querySelector: (sel) => queryAll(bodyEl, sel)[0] || null,
     querySelectorAll: (sel) => queryAll(bodyEl, sel),
-    addEventListener() {},
+    // Recorded, so a check can fire a page-level click or keydown the way a
+    // real tap outside the menu, or Escape, reaches main.js.
+    listeners: {},
+    addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); },
     body: bodyEl,
   };
 
@@ -138,7 +141,11 @@ export function makeDom() {
   // first, so textOf(#screen) still reads both ledger regions.
   const FIXED = [
     ['screen', null], ['ledger-main', 'screen'], ['ledger-side', 'screen'],
-    ['conn', null], ['whoami', null], ['foot', null], ['ledger-select', null],
+    ['status', null], ['whoami', 'status'], ['conn', 'status'],
+    ['account-btn', null], ['account-initial', 'account-btn'],
+    ['account-menu', null], ['menu-user', 'account-menu'],
+    ['menu-sync', 'account-menu'], ['menu-signin', 'account-menu'],
+    ['foot', null], ['ledger-select', null],
     ['tab-ledger', null], ['tab-bills', null], ['bills', null],
   ];
   for (const [id, parent] of FIXED) {
@@ -147,6 +154,8 @@ export function makeDom() {
     byId.set(id, el);
     (parent ? byId.get(parent) : bodyEl).appendChild(el);
   }
+  // As index.html ships them.
+  for (const id of ['account-menu', 'menu-signin']) byId.get(id).hidden = true;
   return { document, make, byId };
 }
 
@@ -179,6 +188,8 @@ globalThis.window = {
   location: { origin: 'https://example.test' },
 };
 const fireWindow = (type) => (windowListeners[type] || []).forEach((fn) => fn({ type }));
+const fireDocument = (type, event = {}) =>
+  (document.listeners[type] || []).forEach((fn) => fn({ type, preventDefault() {}, ...event }));
 // Node itself defines a read-only `navigator` global (its own Navigator-ish
 // object, since Node 21) — a plain assignment throws where a browser would
 // just let this replace `window.navigator`. defineProperty stands in for
@@ -216,6 +227,25 @@ const { enqueue } = await import('./app/queue.js');
     'sync failed', 'a stale timestamp never outranks a failure');
   assert.equal(ui.connLabel({ online: false, syncing: false, at: '23:40' }), 'offline',
     'and offline outranks both');
+}
+
+// ── the status line and the account menu's connection-driven parts
+// (stage 4 spec §2.1, §2.3) ─────────────────────────────────────────────
+{
+  const status = document.getElementById('status');
+  const btn = document.getElementById('account-btn');
+  ui.renderConn({ online: false });
+  assert.equal(status.getAttribute('data-state'), 'offline', 'offline turns the dot red');
+  assert.equal(document.getElementById('menu-sync').disabled, true, 'and Sync now cannot be tapped');
+  ui.renderConn({ online: true, needsAuth: true });
+  assert.equal(status.getAttribute('data-state'), 'auth', 'a lost session turns it amber');
+  assert.equal(btn.getAttribute('data-alert'), 'true', 'and marks the account button, menu closed or not');
+  assert.equal(document.getElementById('menu-signin').hidden, false, 'Sign in again shows only now');
+  ui.renderConn({ online: true, at: '12:50' });
+  assert.equal(status.getAttribute('data-state'), null, 'synced is the plain state');
+  assert.equal(btn.getAttribute('data-alert'), null, 'the alert clears');
+  assert.equal(document.getElementById('menu-signin').hidden, true, 'and so does Sign in again');
+  assert.equal(document.getElementById('menu-sync').disabled, false, 'Sync now is live again');
 }
 
 // ── the home screen renders what the server sent ──────────────────────
@@ -575,6 +605,34 @@ const { enqueue } = await import('./app/queue.js');
 
   assert.match(document.getElementById('conn').textContent, /^synced \d{2}:\d{2}$/,
     'boot wired a real, successful sync before either scenario below touches it');
+
+  // ── the header and the account menu (stage 4 spec §2.1, §2.3; Review
+  // Focus 2). The stub's dispatch does not bubble, so a tap on the button
+  // is its own click plus the same click reaching the page. ───────────────
+  {
+    const menu = document.getElementById('account-menu');
+    const btn = document.getElementById('account-btn');
+    const tapButton = () => { btn.dispatch('click'); fireDocument('click', { target: btn }); };
+    assert.match(textOf(document.getElementById('status')), /^vin synced \d{2}:\d{2}$/,
+      'the status line is the name, then the connection');
+    assert.equal(document.getElementById('account-initial').textContent, 'V', "the button shows the name's first letter");
+    assert.equal(menu.hidden, true, 'the menu starts closed');
+    tapButton();
+    assert.equal(menu.hidden, false, 'the button opens it');
+    assert.equal(btn.getAttribute('aria-expanded'), 'true', 'and says so');
+    assert.equal(document.getElementById('menu-user').textContent, 'vin', 'naming who is signed in');
+    fireDocument('click', { target: document.getElementById('menu-user') });
+    assert.equal(menu.hidden, false, 'a tap inside the menu leaves it open');
+    tapButton();
+    assert.equal(menu.hidden, true, 'the button closes it again, and the same tap reaching the page does not reopen it');
+    tapButton();
+    fireDocument('click', { target: document.getElementById('ledger-main') });
+    assert.equal(menu.hidden, true, 'a tap outside closes it');
+    tapButton();
+    fireDocument('keydown', { key: 'Escape' });
+    assert.equal(menu.hidden, true, 'and so does Escape');
+    assert.equal(btn.getAttribute('aria-expanded'), 'false', 'and says so');
+  }
 
   // ── Recent defaults to the first account, and a real tap (or Enter) on an
   // account pill switches it — through main.js's actual listeners, not
@@ -1077,6 +1135,38 @@ const { enqueue } = await import('./app/queue.js');
     assert.ok(textOf(billsEl).includes('Start 2026-11'), 'the new cycle is shown, and Start moves on');
     assert.ok(await db.getView('bills:cycle:2026-10'), 'cached under its own key');
 
+    navigator.onLine = false;
+    fireWindow('offline');
+  }
+
+  // ── Sign in again from the account menu, on the Bills tab (stage 4 spec
+  // §2.3; Review Focus 1): Google's button renders into #ledger-main, so
+  // the ledger has to come into view first ─────────────────────────────
+  {
+    let signInCallback = null;
+    fakeGoogle.accounts.id.initialize = (opts) => { signInCallback = opts.callback; };
+    fetchImpl = fetchReturning({ ok: false, error: 'Sign in again to continue.', kind: 'auth' });
+    navigator.onLine = true;
+    fireWindow('online');
+    await settle();
+    document.getElementById('tab-bills').dispatch('click');
+    await settle();
+    assert.equal(document.getElementById('bills').hidden, false, 'precondition: on the Bills tab');
+    assert.equal(document.getElementById('menu-signin').hidden, false, 'precondition: the session is lost');
+
+    document.getElementById('account-btn').dispatch('click');
+    document.getElementById('menu-signin').dispatch('click');
+    await settle();
+    assert.equal(document.getElementById('account-menu').hidden, true, 'the menu closes on its action');
+    assert.equal(document.getElementById('bills').hidden, true, "Google's button needs the ledger in view");
+    assert.equal(document.getElementById('ledger-main').hidden, false, 'with the region it renders into showing');
+
+    fetchImpl = fetchReturning({ ok: true, data: bootstrapView });
+    const payload = Buffer.from(JSON.stringify({ email: 'vin@example.test' })).toString('base64url');
+    signInCallback({ credential: 'h.' + payload + '.s' });
+    for (let i = 0; i < 5; i += 1) await settle();
+    assert.equal(document.getElementById('menu-signin').hidden, true, 'signed in, Sign in again goes away');
+    assert.equal(document.getElementById('account-btn').getAttribute('data-alert'), null, 'and so does the alert');
     navigator.onLine = false;
     fireWindow('offline');
   }

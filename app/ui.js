@@ -80,6 +80,16 @@ export function connLabel(state) {
   return 'not synced yet';
 }
 
+/** The status dot's state (stage 4 spec §2.1), in connLabel's own order;
+    '' means all is well. */
+export function connState(state) {
+  if (!state.online) return 'offline';
+  if (state.syncing) return 'syncing';
+  if (state.needsAuth) return 'auth';
+  if (state.error) return 'error';
+  return '';
+}
+
 /** entryFrom (and the wire format addEntry expects) always carries an
     unsigned amount plus a separate `direction` — Ledger.gs's appendEntry_
     runs validateEntry_ (which rejects amount <= 0) BEFORE entryRow_ applies
@@ -626,13 +636,21 @@ export function renderLedgers(state) {
   select.disabled = !view || !state.conn.online || ledgers.length < 2;
 }
 
-/** Writes the connection line into #conn — already in index.html's topbar,
-    never recreated — and marks it offline for the CSS to color red. */
+/** Everything the connection decides (stage 4 spec §2.1, §2.3), all fixed
+    in index.html and never recreated: the line's text, the status dot, the
+    account button's alert, and the menu's Sync now and Sign in again.
+    Called wherever the connection changes, not only from render(). */
 export function renderConn(state) {
-  const conn = document.getElementById('conn');
-  conn.textContent = connLabel(state);
-  if (state.online) conn.removeAttribute('data-state');
-  else conn.setAttribute('data-state', 'offline');
+  document.getElementById('conn').textContent = connLabel(state);
+  const status = document.getElementById('status');
+  const s = connState(state);
+  if (s) status.setAttribute('data-state', s);
+  else status.removeAttribute('data-state');
+  const btn = document.getElementById('account-btn');
+  if (state.needsAuth) btn.setAttribute('data-alert', 'true');
+  else btn.removeAttribute('data-alert');
+  document.getElementById('menu-signin').hidden = !state.needsAuth;
+  document.getElementById('menu-sync').disabled = !state.online;
 }
 
 /** Backoff for the sync retry: first wait `min`, then double up to `max`.

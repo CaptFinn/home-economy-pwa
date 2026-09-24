@@ -185,7 +185,7 @@ import { buildRequest, readResponse } from './app/api.js';
 
 console.log('api self-check passed');
 
-import { nextRetryDelay, entryFrom, connLabel, directedAmount, pendingBalance, validateEntry } from './app/ui.js';
+import { nextRetryDelay, entryFrom, connLabel, directedAmount, pendingBalance, validateEntry, connState } from './app/ui.js';
 
 {
   const e = entryFrom({
@@ -257,6 +257,13 @@ import { nextRetryDelay, entryFrom, connLabel, directedAmount, pendingBalance, v
   assert.equal(nextRetryDelay(40000, 5000, 60000), 60000, 'and is capped');
   assert.equal(nextRetryDelay(60000, 5000, 60000), 60000, 'staying at the cap');
 }
+
+// The status dot (stage 4 spec §2.1), in connLabel's own order.
+assert.equal(connState({ online: false, needsAuth: true }), 'offline', 'offline outranks everything');
+assert.equal(connState({ online: true, syncing: true }), 'syncing', 'then a sync in flight');
+assert.equal(connState({ online: true, needsAuth: true, error: 'x' }), 'auth', 'then a lost session');
+assert.equal(connState({ online: true, error: 'boom' }), 'error', 'then a failed sync');
+assert.equal(connState({ online: true, at: '12:50' }), '', 'and otherwise all is well');
 
 console.log('ui self-check passed');
 

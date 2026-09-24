@@ -124,12 +124,14 @@ function render() {
   renderConn(conn);
   renderLedgers({ view, conn }); // #ledger-select is fixed in index.html's topbar, like #conn
   // bootstrap.data.user is already on the wire (Code.gs's getBootstrap) and
-  // was simply discarded until now (round-2 review, C5) — #whoami is a
-  // fixed element in index.html's topbar, never recreated, so this can just
+  // was simply discarded until now (round-2 review, C5) — #whoami, #menu-user
+  // and #account-initial are fixed elements in index.html's topbar, never recreated, so this can just
   // write it directly rather than routing it through ui.js's rebuild-heavy
   // render functions.
-  const whoami = document.getElementById('whoami');
-  if (whoami) whoami.textContent = view && view.user ? view.user : '';
+  const user = view && view.user ? view.user : '';
+  document.getElementById('whoami').textContent = user;
+  document.getElementById('menu-user').textContent = user;
+  document.getElementById('account-initial').textContent = user ? user[0].toUpperCase() : '';
 }
 
 /** The Ledger | Bills tab bar (spec §2), and which panel shows. Both tabs
@@ -431,6 +433,18 @@ function onScreenKeydown(event) {
     (connLabel's 'sign in again'), that's the sign-in affordance itself —
     tapping re-runs signIn() rather than a sync that would just fail the
     same way again; otherwise a tap is just a manual sync trigger. */
+/** The account menu (stage 4 spec §2.3): a disclosure under the account
+    button. It closes on any of its actions, on a tap outside it, and on
+    Escape (boot wires those). */
+function setMenu(open) {
+  document.getElementById('account-menu').hidden = !open;
+  document.getElementById('account-btn').setAttribute('aria-expanded', String(open));
+}
+
+function menuOpen() {
+  return !document.getElementById('account-menu').hidden;
+}
+
 async function onConnClick() {
   if (conn.needsAuth) {
     // signIn() needs the network the same as any other Google call — no
@@ -439,6 +453,13 @@ async function onConnClick() {
     // a catch that would be an unhandled rejection out of an event handler
     // instead of just leaving conn.needsAuth true for the next tap.
     if (!navigator.onLine) return;
+    // Google's button renders into #ledger-main (auth.js), which is hidden
+    // on the Bills tab and behind a phone's open log: bring it into view
+    // first, or the person is asked to tap a button they cannot see.
+    tab = 'ledger';
+    log = null;
+    renderTabs();
+    document.getElementById('ledger-main').hidden = false;
     try {
       await signIn();
     } catch (err) {
@@ -854,7 +875,22 @@ export async function boot() {
     if (e.target.closest('#entry-form')) draft = formValues();
   });
   document.getElementById('screen').addEventListener('keydown', onScreenKeydown);
-  document.getElementById('conn').addEventListener('click', onConnClick);
+  document.getElementById('status').addEventListener('click', onConnClick);
+  document.getElementById('account-btn').addEventListener('click', () => setMenu(!menuOpen()));
+  document.getElementById('menu-sync').addEventListener('click', () => { setMenu(false); onConnClick(); });
+  document.getElementById('menu-signin').addEventListener('click', () => { setMenu(false); onConnClick(); });
+  // A tap anywhere else closes the menu. The button's own tap reaches here
+  // too, after its toggle, and must not undo it.
+  document.addEventListener('click', (e) => {
+    if (!menuOpen()) return;
+    if (e.target.closest('#account-menu') || e.target.closest('#account-btn')) return;
+    setMenu(false);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || !menuOpen()) return;
+    setMenu(false);
+    document.getElementById('account-btn').focus();
+  });
   document.getElementById('ledger-select').addEventListener('change', (e) => switchLedger(e.target.value));
   document.getElementById('tab-ledger').addEventListener('click', () => setTab('ledger'));
   document.getElementById('tab-bills').addEventListener('click', () => setTab('bills'));

@@ -1,9 +1,16 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
   <rect width="512" height="512" fill="#ffffff"/>
-  <g fill="none" stroke="#14161a" stroke-width="34" stroke-linecap="round">
-    <path d="M186 132v248"/>
-    <path d="M186 132h74a62 62 0 0 1 0 124h-74"/>
-    <path d="M140 196h186"/>
-    <path d="M140 246h186"/>
+  <!-- A house with a peso inside: home, and the money kept in it. The mark
+       stays inside the central 80% so a round or squircle mask never cuts it
+       (the manifest declares it maskable). -->
+  <g fill="none" stroke="#14161a" stroke-width="34" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M128 252L256 140l128 112"/>
+    <path d="M168 220v158h176V220"/>
+  </g>
+  <g fill="none" stroke="#14161a" stroke-width="22" stroke-linecap="round">
+    <path d="M236 262v88"/>
+    <path d="M236 262h26a22 22 0 0 1 0 44h-26"/>
+    <path d="M218 282h66"/>
+    <path d="M218 298h66"/>
   </g>
 </svg>

@@ -5,7 +5,7 @@ import { getView, putView, listQueue, putQueued, removeQueued } from './db.js';
 import { enqueue, drain } from './queue.js';
 import * as api from './api.js';
 import { currentAuth, refresh, signIn } from './auth.js';
-import { entryFrom, validateEntry, editFields, renderEntry, renderPending, renderRecent, renderLog, renderConn, renderLedgers, nextRetryDelay } from './ui.js';
+import { entryFrom, validateEntry, editFields, renderEntry, renderPending, renderRecent, renderLog, renderConn, renderLedgers, nextRetryDelay, storedLayout } from './ui.js';
 import { renderBills, overlayQueued, billsKey, SWAP_PAYDAY, SWAP_CYCLE, nextCycle } from './bills.js';
 
 // memoryStore()'s shape, over the real IndexedDB functions — queue.js and
@@ -62,6 +62,32 @@ const bills = {
 let billsSeq = 0;
 const conn = { online: navigator.onLine, syncing: false, at: null, error: '' };
 
+// 'mobile' or 'desktop' (stage 4 spec §3), per device. applyLayout draws
+// it; setLayout is the account menu's switch, which also remembers it.
+let layout = 'mobile';
+
+function applyLayout(mode) {
+  layout = mode === 'desktop' ? 'desktop' : 'mobile';
+  const desktop = layout === 'desktop';
+  document.body.classList.toggle('desktop', desktop);
+  document.getElementById('layout-mobile').setAttribute('aria-pressed', String(!desktop));
+  document.getElementById('layout-desktop').setAttribute('aria-pressed', String(desktop));
+}
+
+function setLayout(mode) {
+  applyLayout(mode);
+  try {
+    localStorage.setItem('layout', layout);
+  } catch {
+    // Storage refused (private mode): the choice holds for this visit only.
+  }
+  setMenu(false);
+  // The log is arranged differently per layout, so switching closes it, as
+  // the Apps Script app's setLayout does.
+  log = null;
+  render();
+}
+
 // navigator.onLine goes true the moment the OS sees an interface, which is
 // routinely before anything can actually be reached — so the sync fired by
 // the `online` event often fails, and without this nothing would try again
@@ -105,17 +131,18 @@ function render() {
   if (tab === 'bills') {
     renderBills({ bills, queue, conn });
   } else {
-    // The log takes the whole screen (stage 2 spec §3.2), so the form side
-    // is hidden while it is open.
-    const formSide = !log;
+    // On Mobile the log takes the whole screen (stage 2 spec §3.2); on
+    // Desktop it takes the side region and the form stays (stage 4 §3.4).
+    const formSide = !log || layout === 'desktop';
     document.getElementById('ledger-main').hidden = !formSide;
     if (formSide) {
       // conn travels too: when a sync fails, the form's own hint is where the
       // reason belongs — that is the line someone reads when the button is dead.
       renderEntry({ view, account, queue, conn, editing, voidArmed }); // rebuilds #ledger-main, including an empty pending slot
       if (draft) fillForm(draft);
-      // Fills that slot in: this book's items only, minus what Recent already says.
-      renderPending(queue, view ? view.ledger : '', view && view.accounts.find((a) => a.name === account));
+      // Fills that slot in: this book's items only, minus what Recent already
+      // says. With the log open Recent is not on screen, so nothing is left out.
+      renderPending(queue, view ? view.ledger : '', log ? null : view && view.accounts.find((a) => a.name === account));
     }
     if (log) renderLog({ log, conn, queue, ledger: view ? view.ledger : '' });
     else renderRecent({ view, account, queue, editing }); // the selected account's last-synced rows, plus its own pending ones
@@ -828,6 +855,9 @@ function onBillsClick(event) {
 }
 
 export async function boot() {
+  // Before anything draws, so a laptop on Desktop never paints Mobile first.
+  applyLayout(storedLayout());
+
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(() => {}); // offline-first still works if this fails
   }
@@ -879,6 +909,8 @@ export async function boot() {
   document.getElementById('account-btn').addEventListener('click', () => setMenu(!menuOpen()));
   document.getElementById('menu-sync').addEventListener('click', () => { setMenu(false); onConnClick(); });
   document.getElementById('menu-signin').addEventListener('click', () => { setMenu(false); onConnClick(); });
+  document.getElementById('layout-mobile').addEventListener('click', () => setLayout('mobile'));
+  document.getElementById('layout-desktop').addEventListener('click', () => setLayout('desktop'));
   // A tap anywhere else closes the menu. The button's own tap reaches here
   // too, after its toggle, and must not undo it.
   document.addEventListener('click', (e) => {

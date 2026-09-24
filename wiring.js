@@ -106,6 +106,18 @@ export function makeDom() {
     Object.defineProperty(el, 'firstChild', {
       get() { return this.children[0] || null; },
     });
+    // Enough of DOMTokenList for main.js's layout class (stage 4 spec
+    // §3.1), kept on className so matchesSelector('.desktop') still sees it.
+    el.classList = {
+      contains: (c) => String(el.className).split(/\s+/).includes(c),
+      add: (c) => { if (!el.classList.contains(c)) el.className = (el.className ? el.className + ' ' : '') + c; },
+      remove: (c) => { el.className = String(el.className).split(/\s+/).filter((x) => x && x !== c).join(' '); },
+      toggle: (c, force) => {
+        const on = force === undefined ? !el.classList.contains(c) : !!force;
+        if (on) el.classList.add(c); else el.classList.remove(c);
+        return on;
+      },
+    };
     // A real DOM's textContent setter removes every existing child. Without
     // this, renderEntry's `screen.textContent = ''` only erased a string the
     // stub never read back — the stale children from a PREVIOUS render stayed
@@ -145,6 +157,7 @@ export function makeDom() {
     ['account-btn', null], ['account-initial', 'account-btn'],
     ['account-menu', null], ['menu-user', 'account-menu'],
     ['menu-sync', 'account-menu'], ['menu-signin', 'account-menu'],
+    ['layout-mobile', 'account-menu'], ['layout-desktop', 'account-menu'],
     ['foot', null], ['ledger-select', null],
     ['tab-ledger', null], ['tab-bills', null], ['bills', null],
   ];
@@ -1137,6 +1150,62 @@ const { enqueue } = await import('./app/queue.js');
 
     navigator.onLine = false;
     fireWindow('offline');
+  }
+
+  // ── the layout switch (stage 4 spec §3; Review Focus 3 and 5) ─────────
+  {
+    const stored = new Map();
+    globalThis.localStorage = { getItem: (k) => stored.get(k) ?? null, setItem: (k, v) => { stored.set(k, String(v)); } };
+    const mainEl = document.getElementById('ledger-main');
+    const sideEl = document.getElementById('ledger-side');
+    const screen = document.getElementById('screen');
+    const choose = (id) => { document.getElementById('account-btn').dispatch('click'); document.getElementById(id).dispatch('click'); };
+
+    document.getElementById('tab-ledger').dispatch('click');
+    await settle();
+    assert.equal(document.body.classList.contains('desktop'), false, 'boot with nothing stored is Mobile');
+
+    // An unsent entry for the selected account. Recent lists it, so the
+    // pending list above the form leaves it out — until the log hides Recent.
+    screen.dispatch('click', { target: find(mainEl, (el) => el.dataset.account === 'Groceries') });
+    document.getElementById('f-date').value = '2026-09-24';
+    document.getElementById('f-type').value = 'Withdrawal';
+    document.getElementById('f-source').value = 'Desk';
+    document.getElementById('f-desc').value = 'layout check';
+    document.getElementById('f-amount').value = '4321';
+    screen.dispatch('submit', { target: document.getElementById('entry-form') });
+    await settle();
+
+    choose('layout-desktop');
+    assert.equal(document.body.classList.contains('desktop'), true, 'Desktop from the menu marks the page');
+    assert.equal(stored.get('layout'), 'desktop', 'and is remembered on this device');
+    assert.equal(document.getElementById('layout-desktop').getAttribute('aria-pressed'), 'true', 'the switch shows it');
+    assert.equal(document.getElementById('account-menu').hidden, true, 'the menu closes on its action');
+
+    screen.dispatch('click', { target: document.getElementById('view-all') });
+    await settle();
+    assert.ok(sideEl.querySelector('#log'), 'on Desktop the log opens in the side region');
+    assert.equal(mainEl.hidden, false, 'the form side stays');
+    assert.ok(mainEl.querySelector('#entry-form'), 'with the form in it');
+    assert.ok(textOf(document.getElementById('pending-list')).includes('4,321.00'),
+      "with Recent gone, the pending list names the account's own unsent entry");
+
+    choose('layout-mobile');
+    assert.equal(document.body.classList.contains('desktop'), false, 'Mobile again');
+    assert.equal(stored.get('layout'), 'mobile', 'remembered too');
+    assert.ok(sideEl.querySelector('.recent') && !sideEl.querySelector('#log'), 'switching layout closed the log');
+
+    screen.dispatch('click', { target: document.getElementById('view-all') });
+    await settle();
+    assert.equal(mainEl.hidden, true, 'on Mobile the log takes the whole screen');
+    screen.dispatch('click', { target: document.getElementById('log-back') });
+    assert.equal(mainEl.hidden, false, 'and Back brings the form back');
+
+    globalThis.localStorage = { getItem() { throw new Error('denied'); }, setItem() { throw new Error('denied'); } };
+    choose('layout-desktop');
+    assert.equal(document.body.classList.contains('desktop'), true, 'a storage that refuses writes still switches, for this visit');
+    choose('layout-mobile');
+    globalThis.localStorage = undefined;
   }
 
   // ── Sign in again from the account menu, on the Bills tab (stage 4 spec

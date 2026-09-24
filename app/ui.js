@@ -90,6 +90,18 @@ export function connState(state) {
   return '';
 }
 
+/** The layout this device last chose (stage 4 spec §3.1). Per device, not
+    per person — the same person is on a phone and a laptop — so it lives in
+    localStorage. The property itself can throw in a locked-down browser,
+    so it is read inside the try too; any failure is Mobile. */
+export function storedLayout() {
+  try {
+    return globalThis.localStorage.getItem('layout') === 'desktop' ? 'desktop' : 'mobile';
+  } catch {
+    return 'mobile';
+  }
+}
+
 /** entryFrom (and the wire format addEntry expects) always carries an
     unsigned amount plus a separate `direction` — Ledger.gs's appendEntry_
     runs validateEntry_ (which rejects amount <= 0) BEFORE entryRow_ applies

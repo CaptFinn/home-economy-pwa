@@ -185,7 +185,7 @@ import { buildRequest, readResponse } from './app/api.js';
 
 console.log('api self-check passed');
 
-import { nextRetryDelay, entryFrom, connLabel, directedAmount, pendingBalance, validateEntry, connState } from './app/ui.js';
+import { nextRetryDelay, entryFrom, connLabel, directedAmount, pendingBalance, validateEntry, connState, storedLayout } from './app/ui.js';
 
 {
   const e = entryFrom({
@@ -264,6 +264,18 @@ assert.equal(connState({ online: true, syncing: true }), 'syncing', 'then a sync
 assert.equal(connState({ online: true, needsAuth: true, error: 'x' }), 'auth', 'then a lost session');
 assert.equal(connState({ online: true, error: 'boom' }), 'error', 'then a failed sync');
 assert.equal(connState({ online: true, at: '12:50' }), '', 'and otherwise all is well');
+
+// The layout read back at boot (stage 4 spec §3.1): only a stored
+// 'desktop' is Desktop; anything else, or a storage that throws, is Mobile.
+{
+  const withStorage = (s) => { globalThis.localStorage = s; return storedLayout(); };
+  assert.equal(withStorage({ getItem: () => 'desktop' }), 'desktop', 'a stored Desktop is read back');
+  assert.equal(withStorage({ getItem: () => null }), 'mobile', 'nothing stored is Mobile');
+  assert.equal(withStorage({ getItem: () => 'sideways' }), 'mobile', 'anything else is Mobile');
+  assert.equal(withStorage({ getItem() { throw new Error('denied'); } }), 'mobile', 'a storage that throws is Mobile');
+  assert.equal(withStorage(undefined), 'mobile', 'and so is none at all');
+  delete globalThis.localStorage;
+}
 
 console.log('ui self-check passed');
 

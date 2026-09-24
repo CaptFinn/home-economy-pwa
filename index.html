@@ -27,7 +27,6 @@
            connection. A tap signs in when needed, otherwise syncs. -->
       <button type="button" class="status" id="status"><span class="whoami" id="whoami"></span><span class="conn" id="conn"></span></button>
     </div>
-    <select class="ledger-select" id="ledger-select" aria-label="Ledger"></select>
     <!-- A disclosure, not role=menu: it holds a toggle group as well as
          actions (spec §2.3; plan's one deviation). -->
     <button type="button" class="account-btn" id="account-btn" aria-label="Account" aria-expanded="false" aria-controls="account-menu"><span id="account-initial"></span><svg class="account-glyph" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="5.5" r="3" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M2.5 14c.8-2.8 3-4.2 5.5-4.2s4.7 1.4 5.5 4.2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg></button>
@@ -40,9 +39,14 @@
       <button type="button" class="menu-item" id="menu-signin" hidden>Sign in again</button>
     </div>
   </div>
-  <div class="views" role="tablist">
-    <button type="button" class="view-tab" id="tab-ledger" role="tab" aria-selected="true" aria-controls="screen">Ledger</button>
-    <button type="button" class="view-tab" id="tab-bills" role="tab" aria-selected="false" aria-controls="bills">Bills</button>
+  <div class="views">
+    <div class="view-tabs" role="tablist">
+      <button type="button" class="view-tab" id="tab-ledger" role="tab" aria-selected="true" aria-controls="screen">Ledger</button>
+      <button type="button" class="view-tab" id="tab-bills" role="tab" aria-selected="false" aria-controls="bills">Bills</button>
+    </div>
+    <!-- The open tab's picker (stage 4 spec §2.2); renderTabs shows one. -->
+    <select class="ledger-select" id="ledger-select" aria-label="Ledger"></select>
+    <select class="ledger-select" id="bills-scope" aria-label="Cycle or payday" hidden></select>
   </div>
   <main id="screen" role="tabpanel">
     <!-- The two regions the Desktop layout places side by side (stage 4

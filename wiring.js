@@ -159,7 +159,7 @@ export function makeDom() {
     ['menu-sync', 'account-menu'], ['menu-signin', 'account-menu'],
     ['layout-mobile', 'account-menu'], ['layout-desktop', 'account-menu'],
     ['foot', null], ['ledger-select', null],
-    ['tab-ledger', null], ['tab-bills', null], ['bills', null],
+    ['tab-ledger', null], ['tab-bills', null], ['bills-scope', null], ['bills', null],
   ];
   for (const [id, parent] of FIXED) {
     const el = make('div');
@@ -933,7 +933,7 @@ const { enqueue } = await import('./app/queue.js');
     const scopeSelect = () => document.getElementById('bills-scope');
     const pickScope = async (value) => {
       scopeSelect().value = value;
-      billsEl.dispatch('change', { target: scopeSelect() });
+      scopeSelect().dispatch('change');
       await settle();
     };
 
@@ -981,12 +981,16 @@ const { enqueue } = await import('./app/queue.js');
     // actually manages it rather than the assertion after the tap passing
     // on the default.
     assert.equal(billsEl.hidden, true, 'precondition: the app booted on the ledger, Bills hidden');
+    assert.equal(scopeSelect().hidden, true, 'the tab row holds no cycle picker on the Ledger tab');
+    assert.equal(document.getElementById('ledger-select').hidden, false, 'it holds the ledger picker there');
 
     navigator.onLine = true;
     document.getElementById('tab-bills').dispatch('click');
     await settle();
     assert.equal(billsEl.hidden, false, 'the Bills tab shows its panel');
     assert.equal(document.getElementById('screen').hidden, true, 'in place of the ledger');
+    assert.equal(document.getElementById('ledger-select').hidden, true, 'the ledger picker steps aside on Bills');
+    assert.equal(scopeSelect().hidden, false, 'for the cycle picker, in the same tab-row spot');
     assert.deepEqual(sent.filter((b) => b.op === 'bills').map((b) => b.args.cycle), [''],
       'the first open asks the server for the latest cycle');
     let text = textOf(billsEl);
@@ -999,7 +1003,9 @@ const { enqueue } = await import('./app/queue.js');
 
     await pickScope(SWAP_PAYDAY);
     text = textOf(billsEl);
-    assert.ok(text.includes('Payday sep 15, 2026'), 'the payday view names its payday');
+    const shown = scopeSelect().children.find((o) => o.value === scopeSelect().value);
+    assert.equal(shown.textContent, 'sep 15, 2026', 'the tab-row picker names the payday on screen');
+    assert.ok(!find(billsEl, (el) => el.tagName === 'H2'), 'and the panel no longer repeats it as a heading');
     assert.ok(text.includes('Internet') && text.includes('Each of you') && text.includes('Both of you'),
       'one line per bill, and the payday totals');
     assert.ok(await db.getView('bills:payday:2026-09-15'), 'and is cached too');
@@ -1134,7 +1140,7 @@ const { enqueue } = await import('./app/queue.js');
     // Deliberately not awaited before the swap: the point is to move the
     // person elsewhere while the Start above is still in flight.
     scopeSelect().value = SWAP_PAYDAY;
-    billsEl.dispatch('change', { target: scopeSelect() });
+    scopeSelect().dispatch('change');
     await settle();
     assert.ok(!textOf(billsEl).includes('Start 2026-11'),
       "a superseded Start's view does not override the scope the person moved to");

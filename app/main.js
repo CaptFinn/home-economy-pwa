@@ -161,14 +161,16 @@ function render() {
   document.getElementById('account-initial').textContent = user ? user[0].toUpperCase() : '';
 }
 
-/** The Ledger | Bills tab bar (spec §2), and which panel shows. Both tabs
-    and both panels are fixed in index.html, like #conn. */
+/** The Ledger | Bills tab bar (spec §2), and which panel shows. The tabs,
+    the panels and the two tab-row pickers are fixed in index.html, like #conn. */
 function renderTabs() {
   const onBills = tab === 'bills';
   document.getElementById('screen').hidden = onBills;
   document.getElementById('bills').hidden = !onBills;
   document.getElementById('tab-ledger').setAttribute('aria-selected', String(!onBills));
   document.getElementById('tab-bills').setAttribute('aria-selected', String(onBills));
+  document.getElementById('ledger-select').hidden = onBills;
+  document.getElementById('bills-scope').hidden = !onBills;
 }
 
 function hint(message) {
@@ -747,7 +749,6 @@ async function onScope(value) {
 
 function onBillsChange(event) {
   const t = event.target;
-  if (t.id === 'bills-scope') onScope(t.value);
   if (t.dataset && t.dataset.tickRow !== undefined) onTick(t);
 }
 
@@ -926,6 +927,7 @@ export async function boot() {
   document.getElementById('ledger-select').addEventListener('change', (e) => switchLedger(e.target.value));
   document.getElementById('tab-ledger').addEventListener('click', () => setTab('ledger'));
   document.getElementById('tab-bills').addEventListener('click', () => setTab('bills'));
+  document.getElementById('bills-scope').addEventListener('change', (e) => onScope(e.target.value));
   document.getElementById('bills').addEventListener('change', onBillsChange);
   document.getElementById('bills').addEventListener('click', onBillsClick);
   document.getElementById('bills').addEventListener('input', (e) => {

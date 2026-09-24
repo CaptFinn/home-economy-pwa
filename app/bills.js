@@ -293,7 +293,7 @@ const SIGNED_OUT_HINT = 'Sign in again to carry a bill or start a cycle.';
 
 /**
  * Draws the Bills tab into #bills, which index.html creates once, as it does
- * #screen: the heading and scope dropdown, refused items, the pending
+ * #screen: the tab row's scope picker, refused items, the pending
  * banner, the cards or payday lines, the totals, Start, and a hint line.
  * `state` is { bills, queue, conn }, with `bills` being main.js's own object.
  */
@@ -308,13 +308,11 @@ export function renderBills(state) {
   // out they could only fail, so they are disabled rather than offered.
   const canAct = state.conn.online && !state.conn.needsAuth && !b.busy;
 
-  const head = el('div', 'section-head');
-  head.appendChild(el('h2', null, isPayday
-    ? (scope ? 'Payday ' + longDay(scope) : (view ? 'No paydays yet' : 'Payday'))
-    : (scope || (view ? 'No cycles yet' : 'Bills'))));
-  const select = el('select', 'ledger-select');
-  select.id = 'bills-scope';
-  select.setAttribute('aria-label', 'Cycle or payday');
+  // The scope picker is fixed in the tab row (stage 4 spec §2.2) and names
+  // the scope, so the panel has no heading of its own; this refills it, as
+  // renderLedgers refills #ledger-select.
+  const select = document.getElementById('bills-scope');
+  select.textContent = '';
   // The list the server last sent for this view, kept by main.js even when
   // the scope on screen was never loaded, so there is always a way back.
   const opts = b.options[b.mode].slice();
@@ -328,8 +326,6 @@ export function renderBills(state) {
   swap.value = isPayday ? SWAP_CYCLE : SWAP_PAYDAY;
   select.appendChild(swap);
   select.value = scope;
-  head.appendChild(select);
-  host.appendChild(head);
 
   state.queue
     .filter((i) => i.state === 'parked' && BILL_OPS.includes(i.op))

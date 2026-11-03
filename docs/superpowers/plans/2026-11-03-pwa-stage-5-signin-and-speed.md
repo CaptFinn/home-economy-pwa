@@ -82,16 +82,21 @@ with (the new lines first, the original line last):
 
 ```
 // Utilities, just enough for the session token: HMAC-SHA256 and web-safe
-// base64 over node crypto. Real Apps Script returns signed bytes; Uint8Array
-// handles both. Keep apostrophes out of this block: the whole script is
-// inside single quotes in the shell.
-var nodeCrypto = require("crypto");
+// base64 over node builtin hashing module. Real Apps Script returns signed bytes;
+// Uint8Array handles both. Keep apostrophes out of this block: the whole script
+// is inside single quotes in the shell.
+// The module name is split on purpose: Node 24 treats a node -e script containing
+// the whole word as a different kind of script (anywhere in the text, comments
+// too), and every var in it stops being global, which breaks the
+// FAKE_SESSION_EMAIL_ check further down. For the same reason, never call
+// require("crypto") here.
+var nodeCrypto = process.getBuiltinModule("cry" + "pto");
 function toBuf(v) {
   return Buffer.isBuffer(v) ? v : typeof v === "string" ? Buffer.from(v, "utf8") : Buffer.from(Uint8Array.from(v));
 }
 global.Utilities = {
   newBlob: function (s) {
-    var b = Buffer.from(String(s), "utf8");
+    var b = toBuf(s); // a string or a byte array, as the real newBlob takes
     return { getBytes: function () { return Array.from(b); }, getDataAsString: function () { return b.toString("utf8"); } };
   },
   base64EncodeWebSafe: function (v) { return toBuf(v).toString("base64").replace(/\+/g, "-").replace(/\//g, "_"); },

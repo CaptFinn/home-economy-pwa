@@ -563,14 +563,12 @@ const { enqueue } = await import('./app/queue.js');
     },
   };
 
-  // A fake accounts.id whose prompt(cb) reports a skipped moment straight
-  // away, so refresh() resolves null promptly instead of waiting out its
-  // real 4-second timeout for a popup that will never appear under node.
+  // A fake accounts.id. Nothing calls prompt() any more: the silent refresh
+  // went in stage 5, so sign-in is the only Google call left.
   const fakeGoogle = {
     accounts: {
       id: {
         initialize() {},
-        prompt(cb) { cb({ isNotDisplayed: () => false, isSkippedMoment: () => true }); },
         renderButton() {},
       },
     },
@@ -1278,19 +1276,48 @@ const { enqueue } = await import('./app/queue.js');
     fireWindow('offline');
   }
 
-  // ── a silent refresh must not steal a waiting sign-in's callback (spec
-  // §7.1). Last in this block: the sign-in below waits on a tap that never
-  // comes under node, so it is left pending on purpose. ───────────────────
+  // ── sign-in trades the Google token for the server's session (stage 5
+  // spec §4; Review Focus 2) ────────────────────────────────────────────
   {
     const auth = await import('./app/auth.js');
-    let inits = 0;
-    fakeGoogle.accounts.id.initialize = () => { inits += 1; };
+    let cb = null;
+    fakeGoogle.accounts.id.initialize = (opts) => { cb = opts.callback; };
     navigator.onLine = true;
-    auth.signIn();
-    await settle();
-    assert.equal(inits, 1, 'precondition: the sign-in has initialised Google and is waiting');
-    assert.equal(await auth.refresh(), null, 'a refresh during sign-in stands aside');
-    assert.equal(inits, 1, 'without re-initialising Google over the sign-in\'s callback');
+    const b64 = (email) => Buffer.from(JSON.stringify({ email })).toString('base64url');
+    const google = 'h.' + b64('vin@example.test') + '.s';
+    const sessionToken = 's1.' + b64('vin@example.test') + '.sig';
+    const signInWith = async () => {
+      const waiting = auth.signIn();
+      await settle();
+      cb({ credential: google });
+      return waiting;
+    };
+
+    // The server issues a session: it is kept, in the field every call reads.
+    const calls = [];
+    fetchImpl = async (url, req) => {
+      calls.push(JSON.parse(req.body));
+      return { text: async () => JSON.stringify({ ok: true, data: { token: sessionToken, exp: 1 } }) };
+    };
+    const stored = await signInWith();
+    assert.deepEqual(calls.map((c) => [c.op, c.token]), [['session', google]],
+      'sign-in asks the server for a session, presenting the Google token');
+    assert.equal(stored.token, sessionToken, 'and keeps the session token');
+    assert.equal(stored.email, 'vin@example.test', 'with the email its payload names');
+    assert.equal((await db.getAuth()).token, sessionToken, 'saved for every later call');
+
+    // An old server, a refusal, or no connection: the Google token is kept.
+    for (const reply of [
+      { ok: false, kind: 'validation', error: 'That request is not something this app does.' },
+      { ok: false, kind: 'server', error: 'Sessions are not set up on this app yet.' },
+    ]) {
+      fetchImpl = fetchReturning(reply);
+      assert.equal((await signInWith()).token, google, 'a refused session keeps the Google token');
+    }
+    fetchImpl = async () => { throw new Error('offline'); };
+    assert.equal((await signInWith()).token, google, 'no connection keeps it too');
+
+    assert.equal(auth.refresh, undefined, 'the silent refresh is gone');
     navigator.onLine = false;
   }
 }

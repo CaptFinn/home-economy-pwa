@@ -4,7 +4,7 @@
 import { getView, putView, listQueue, putQueued, removeQueued } from './db.js';
 import { enqueue, drain } from './queue.js';
 import * as api from './api.js';
-import { currentAuth, refresh, signIn } from './auth.js';
+import { currentAuth, signIn } from './auth.js';
 import { entryFrom, validateEntry, editFields, renderEntry, renderPending, renderRecent, renderLog, renderConn, renderLedgers, nextRetryDelay, storedLayout } from './ui.js';
 import { renderBills, overlayQueued, billsKey, SWAP_PAYDAY, SWAP_CYCLE, nextCycle } from './bills.js';
 
@@ -525,12 +525,10 @@ export async function sync() {
   renderConn(conn);
 
   try {
-    // A fresh silent refresh is preferred, but refresh() returns null for
-    // plenty of reasons short of "not signed in" (offline, GIS not loaded
-    // yet, a dismissed prompt) — the auth rule is that a token already in
-    // hand is proof for about an hour, so falling back to the stored one
-    // avoids blocking a sync on a UI Google chose not to show.
-    const auth = (await refresh()) || (await currentAuth());
+    // The stored token is the session (stage 5 spec §4): nothing here waits
+    // on Google. When it has lapsed the server says so (`auth`) and the
+    // status line asks for a sign-in.
+    const auth = await currentAuth();
     if (!auth || !auth.token) {
       // No stored session at all — not a server rejection, not a network
       // blip, just nobody signed in on this device. Without needsAuth this
@@ -605,8 +603,7 @@ export async function sync() {
     changeable only by hand-editing a Script Property. This is a foreground
     action — the control is disabled until a sync has already succeeded
     once (renderLedgers), so a stored token is already proof of a working
-    session; there's no need to repeat sync()'s refresh()-then-fallback
-    dance for it. */
+    session; it uses that stored token, as sync() does. */
 export async function switchLedger(name) {
   // The native <select> already shows the tapped option the moment `change`
   // fires, before this round trip even starts, and the balances below still
@@ -867,15 +864,12 @@ export async function boot() {
   }
 
   // Checked, and fully resolved, before ANY listener below is registered
-  // (round-2 review, C4) — not just before the first render. sync() (which
-  // every one of online/visibilitychange/conn-click can reach) calls
-  // refresh(), which calls google.accounts.id.initialize() a second time.
-  // GIS's initialize is global, so that second call silently replaces the
-  // callback THIS signIn() is still waiting on, and signIn()'s promise never
-  // settles — a visibilitychange firing while the sign-in popup is open
-  // (switching to it is often what triggers one) is the common case. Doing
-  // this before registering any listener means none of them can fire sync()
-  // while a sign-in is still in flight.
+  // (round-2 review, C4) — not just before the first render. A sync fired by
+  // online/visibilitychange while the sign-in popup is open would run for a
+  // device nobody is signed into yet. (It used to be worse: sync() called
+  // refresh(), whose second google.accounts.id.initialize() replaced the
+  // callback this signIn() waits on. The silent refresh is gone as of stage
+  // 5, but the ordering is still right.)
   //
   // Rendering the cached form and then swapping it for the sign-in button a
   // moment later would also flash a screen the signed-out person isn't

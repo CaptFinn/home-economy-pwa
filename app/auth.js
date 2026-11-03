@@ -65,8 +65,23 @@ function emailFromToken(token) {
 // The token goes in the existing `token` field, so no call site changes
 // whichever kind it is. api.call never throws, so a dead network is just
 // another reply that is not a session.
+//
+// The trade is bounded: boot() waits on signIn() before it registers a single
+// listener, and a fetch has no timeout of its own, so on a connection that
+// stalls (bars showing, nothing arriving) an unbounded wait would freeze the
+// app on Google's button. Past the bound the Google token is kept, as for any
+// other failed trade.
+const SESSION_TIMEOUT_MS = 8000;
+
 async function storeCredential(response) {
-  const traded = await api.call('session', {}, response.credential);
+  let timer;
+  const gaveUp = new Promise((resolve) => { timer = setTimeout(() => resolve({ ok: false }), SESSION_TIMEOUT_MS); });
+  let traded;
+  try {
+    traded = await Promise.race([api.call('session', {}, response.credential), gaveUp]);
+  } finally {
+    clearTimeout(timer);
+  }
   const token = traded.ok && traded.data && traded.data.token ? traded.data.token : response.credential;
   const auth = { email: emailFromToken(token), token };
   await putAuth(auth);

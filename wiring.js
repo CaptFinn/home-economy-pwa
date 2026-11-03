@@ -1418,6 +1418,18 @@ const { enqueue } = await import('./app/queue.js');
     fetchImpl = async () => { throw new Error('offline'); };
     assert.equal((await signInWith()).token, google, 'no connection keeps it too');
 
+    // A connection that stalls (bars showing, nothing arriving) must not hold
+    // the sign-in hostage: the session call is bounded, then the Google token
+    // is kept. The 8 s bound is shortened here, not waited out.
+    const realSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = (fn, ms, ...rest) => realSetTimeout(fn, ms === 8000 ? 5 : ms, ...rest);
+    fetchImpl = () => new Promise(() => {}); // never answers
+    try {
+      assert.equal((await signInWith()).token, google, 'a stalled session call keeps the Google token');
+    } finally {
+      globalThis.setTimeout = realSetTimeout;
+    }
+
     assert.equal(auth.refresh, undefined, 'the silent refresh is gone');
     navigator.onLine = false;
   }

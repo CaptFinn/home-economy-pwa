@@ -15,6 +15,32 @@ export const BILL_OPS = ['setBillFunded', 'setBillNotes'];
 export const SWAP_PAYDAY = '\u0000payday';
 export const SWAP_CYCLE = '\u0000cycle';
 
+/** True when a run sent bill ticks and notes and nothing else (stage 5 spec
+    §5.3). A ledger op changes balances, which only a bootstrap refetch
+    brings back. */
+export function onlyBillOps(items) {
+  return items.length > 0 && items.every((i) => BILL_OPS.includes(i.op));
+}
+
+/** The server answers a tick or a note with the whole updated cycle view.
+    Of the replies a run collected, the last one per cycle is the freshest:
+    the server works through the queue in order, so each reply already holds
+    the earlier ones. Anything that is not a cycle view is skipped. */
+export function lastCycleViews(replies) {
+  const byCycle = new Map();
+  replies.forEach(({ data }) => {
+    if (data && data.cycle && Array.isArray(data.rows)) byCycle.set(data.cycle, data);
+  });
+  return [...byCycle.values()];
+}
+
+/** Is the queue stuck rather than flowing (stage 5 spec §5.4)? A bill
+    tick or note only shows "pending" then: offline, signed out, a failed
+    sync, or a run that left an item unsent. */
+export function isStuck(conn) {
+  return !conn.online || !!conn.needsAuth || !!conn.error || !!conn.unsent;
+}
+
 /** The views-store key for one scope (spec §3). */
 export function billsKey(mode, scope) {
   return 'bills:' + mode + ':' + scope;

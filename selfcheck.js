@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import * as fmt from './app/fmt.js';
 import { memoryStore } from './app/db.js';
 import { enqueue, drain, pendingFor } from './app/queue.js';
-import { overlayQueued, billsKey, nextCycle } from './app/bills.js';
+import { overlayQueued, billsKey, nextCycle, onlyBillOps, lastCycleViews, isStuck } from './app/bills.js';
 
 assert.equal(fmt.peso(1500), '₱1,500.00', 'pesos get a sign-free peso format');
 assert.equal(fmt.peso(0), '₱0.00', 'zero formats');
@@ -57,6 +57,14 @@ console.log('db self-check passed');
   assert.equal(out.sent, 2, 'both sent');
   assert.equal((await store.listQueue()).length, 0, 'and the queue is empty');
 
+  // Stage 5 spec §5.3: each success hands back its reply, oldest first.
+  const r1 = await enqueue(store, 'setBillFunded', { cycle: '2026-09', row: 5 });
+  const r2 = await enqueue(store, 'setBillNotes', { cycle: '2026-09', row: 5 });
+  out = await drain(store, async (item) => ({ ok: true, data: { echo: item.op } }));
+  assert.deepEqual(out.replies.map((r) => [r.item.id, r.data.echo]),
+    [[r1.id, 'setBillFunded'], [r2.id, 'setBillNotes']],
+    'replies come back with their items, oldest first');
+
   // A conflict parks one item and the run continues.
   const c = await enqueue(store, 'updateEntry', { row: 7 });
   const d = await enqueue(store, 'addEntry', { entry: { account: 'A', amount: -20 } });
@@ -64,6 +72,7 @@ console.log('db self-check passed');
     ? { ok: false, kind: 'conflict', error: 'That entry changed. Reload and try again.' }
     : { ok: true });
   assert.equal(out.sent, 1, 'the healthy item still went');
+  assert.equal(out.replies.length, 1, 'and only the item that went has a reply');
   assert.equal(out.parked, 1, 'the conflict was parked');
   const left = await store.listQueue();
   assert.equal(left.length, 1, 'only the parked item remains');
@@ -335,6 +344,32 @@ console.log('ui self-check passed');
   assert.deepEqual(out.rows[0].queued, [true, false], 'and marks the box');
 
   assert.equal(overlayQueued(null, [tick(1, true)]), null, 'no view, nothing to draw over');
+}
+
+// ── stage 5: what a bill-only sync can skip, and when "pending" shows ──
+{
+  const op = (name) => ({ op: name });
+  assert.equal(onlyBillOps([op('setBillFunded'), op('setBillNotes')]), true, 'ticks and notes are bill ops');
+  assert.equal(onlyBillOps([op('setBillFunded'), op('addEntry')]), false,
+    'one ledger op makes it a ledger run: balances need the bootstrap');
+  assert.equal(onlyBillOps([]), false, 'an empty run has nothing to use');
+
+  const v = (cycle, tag) => ({ cycle, rows: [], tag });
+  const kept = lastCycleViews([
+    { item: op('setBillFunded'), data: v('2026-09', 'first') },
+    { item: op('setBillFunded'), data: v('2026-08', 'other') },
+    { item: op('setBillNotes'), data: v('2026-09', 'last') },
+    { item: op('setBillNotes'), data: {} },
+    { item: op('setBillNotes'), data: null },
+  ]);
+  assert.deepEqual(kept.map((d) => d.tag).sort(), ['last', 'other'],
+    'the last reply per cycle wins, and replies that are not cycle views are ignored');
+
+  assert.equal(isStuck({ online: true }), false, 'online and well: nothing is stuck');
+  assert.equal(isStuck({ online: false }), true, 'offline is stuck');
+  assert.equal(isStuck({ online: true, needsAuth: true }), true, 'signed out is stuck');
+  assert.equal(isStuck({ online: true, error: 'Could not reach the sheet.' }), true, 'a failed sync is stuck');
+  assert.equal(isStuck({ online: true, unsent: true }), true, 'a run that left an item unsent is stuck');
 }
 
 console.log('bills self-check passed');

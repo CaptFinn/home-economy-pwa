@@ -24,7 +24,7 @@ export async function enqueue(store, op, args) {
  * decide what to tell the user without re-deriving it from queue state.
  */
 export async function drain(store, send) {
-  const counts = { sent: 0, parked: 0, stopped: false, needsAuth: false };
+  const counts = { sent: 0, parked: 0, stopped: false, needsAuth: false, replies: [] };
   for (const item of await store.listQueue()) {
     if (item.state !== 'pending') continue; // parked items sit until the user resolves them by hand
 
@@ -45,6 +45,7 @@ export async function drain(store, send) {
     if (result && result.ok === true) {
       await store.removeQueued(item.id);
       counts.sent += 1;
+      counts.replies.push({ item, data: result.data }); // stage 5 spec §5.3: sync() may use what the server answered
       continue;
     }
 

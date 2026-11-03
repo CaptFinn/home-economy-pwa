@@ -387,6 +387,8 @@ sign-in after both are.
 
    In the Apps Script web editor: **Project Settings → Script Properties →
    Add script property**, name `SESSION_SECRET`, value the output above.
+   The app refuses a secret under 32 characters (the output above is 48), so
+   do not type one by hand.
 3. **Deploy → Manage deployments → `Api-deployment`** (the id in `config.js`)
    **→ Edit → Version: the new one → Deploy.** Check it still says
    **Execute as: Me** and **Who has access: Anyone**.

@@ -153,8 +153,12 @@ reply does not carry balances. Revisit if it is the next slow thing.
 
 `renderBills` already knows `state.conn`. A queued tick or note shows its
 "pending" label and `.pending` styling only when
-`!conn.online || conn.needsAuth || conn.error`; otherwise it is drawn as
-done. Parked items, the offline hint and the banner are untouched.
+`!conn.online || conn.needsAuth || conn.error || conn.unsent`; otherwise it
+is drawn as done. `conn.unsent` is set by `sync()` when a run ends with an
+item still pending and no immediate re-run: a send the server refuses can
+leave `conn.error` empty (the refetch after it may succeed), and that item
+must not look done. Parked items, the offline hint and the banner are
+untouched.
 
 **The Ledger tab keeps its pending list and "includes pending" note.**
 Those confirm that money you typed has not yet reached the sheet, which

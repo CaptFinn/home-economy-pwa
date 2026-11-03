@@ -186,10 +186,13 @@ function methodTag(method) {
  * who tapped is taken from the session there), so every box is live.
  * Everything a tick queues rides on the box itself; main.js reads it back.
  */
-function ticks(view, boxes, handle) {
+function ticks(view, boxes, handle, stuck) {
   const wrap = el('span', 'ticks');
   view.payers.forEach((name, k) => {
-    const label = el('label', boxes.queued[k] ? 'pending' : null);
+    // A queued value is drawn as done; it wears the mark only while the queue
+    // is stuck (stage 5 spec §5.4).
+    const marked = boxes.queued[k] && stuck;
+    const label = el('label', marked ? 'pending' : null);
     const box = el('input');
     box.type = 'checkbox';
     box.checked = !!boxes.paid[k];
@@ -200,7 +203,7 @@ function ticks(view, boxes, handle) {
     box.dataset.payer = name;
     label.appendChild(box);
     label.appendChild(el('span', null, name));
-    if (boxes.queued[k]) {
+    if (marked) {
       label.appendChild(el('span', 'tick-at', 'pending'));
     } else if (box.checked) {
       const when = ticked(boxes.at && boxes.at[k], boxes.by && boxes.by[k]);
@@ -237,8 +240,9 @@ function noteLine(view, r, ctx) {
     return line;
   }
 
-  const text = button('linkish note-text' + (r.notesQueued ? ' pending' : ''),
-    (r.notes || 'Add note') + (r.notesQueued ? ' · pending' : ''));
+  const noteMark = r.notesQueued && ctx.stuck;
+  const text = button('linkish note-text' + (noteMark ? ' pending' : ''),
+    (r.notes || 'Add note') + (noteMark ? ' · pending' : ''));
   text.dataset.empty = String(!r.notes);
   text.dataset.noteRow = String(r.row);
   line.appendChild(text);
@@ -273,7 +277,7 @@ function billCard(view, r, ctx) {
     const line = el('div', 'sched');
     line.appendChild(el('span', 'sched-day', day(s.payday)));
     line.appendChild(el('span', 'sched-amt fig', peso(s.both)));
-    line.appendChild(ticks(view, s, { cycle: view.cycle, row: r.row, name: r.name, payday: s.payday }));
+    line.appendChild(ticks(view, s, { cycle: view.cycle, row: r.row, name: r.name, payday: s.payday }, ctx.stuck));
     card.appendChild(line);
   });
 
@@ -296,12 +300,12 @@ function billCard(view, r, ctx) {
 
 /** One line per bill funded from the payday on screen (spec §2.2). The
     boxes tick the row's own cycle, never a blank one. */
-function paydayLine(view, r) {
+function paydayLine(view, r, stuck) {
   const line = el('div', 'sched');
   line.appendChild(el('span', 'sched-day', r.name));
   line.appendChild(methodTag(r.method));
   line.appendChild(el('span', 'sched-amt fig', peso(r.each)));
-  line.appendChild(ticks(view, r, { cycle: r.cycle, row: r.row, name: r.name, payday: view.payday }));
+  line.appendChild(ticks(view, r, { cycle: r.cycle, row: r.row, name: r.name, payday: view.payday }, stuck));
   return line;
 }
 
@@ -360,6 +364,7 @@ export function renderBills(state) {
   // Carry and Start go straight to the server (spec §4.3). Offline or signed
   // out they could only fail, so they are disabled rather than offered.
   const canAct = state.conn.online && !state.conn.needsAuth && !b.busy;
+  const stuck = isStuck(state.conn);
 
   // The scope picker is fixed in the tab row (stage 4 spec §2.2) and names
   // the scope, so the panel has no heading of its own; this refills it, as
@@ -410,11 +415,11 @@ export function renderBills(state) {
     rowsEl.appendChild(el('p', 'empty', 'Nothing here yet.'));
   } else if (isPayday) {
     const lines = el('div', 'payday-lines panel');
-    view.rows.forEach((r) => lines.appendChild(paydayLine(view, r)));
+    view.rows.forEach((r) => lines.appendChild(paydayLine(view, r, stuck)));
     rowsEl.appendChild(lines);
     side.appendChild(totals(view.totals, true));
   } else {
-    const ctx = { canAct, editingNote: b.editingNote, noteDraft: b.noteDraft };
+    const ctx = { canAct, editingNote: b.editingNote, noteDraft: b.noteDraft, stuck };
     view.rows.forEach((r) => rowsEl.appendChild(billCard(view, r, ctx)));
     side.appendChild(totals(view.totals, false));
   }

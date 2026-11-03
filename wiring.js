@@ -1165,6 +1165,7 @@ const { enqueue } = await import('./app/queue.js');
     sent.length = 0;
     await setBox('5', '2026-09-30', 'Vin', true);      // its send is held
     await setBox('5', '2026-09-15', 'Venice', false);  // tapped mid-sync
+    assert.ok(!textOf(billsEl).includes('pending'), 'online and flowing, both taps already look done');
     assert.equal(box('5', '2026-09-30', 'Vin').checked, true, 'the first tap shows');
     assert.equal(box('5', '2026-09-15', 'Venice').checked, false, 'and so does the second');
     release();
@@ -1199,8 +1200,18 @@ const { enqueue } = await import('./app/queue.js');
     assert.deepEqual(sent.map((b) => b.op), ['addEntry', 'setBillFunded', 'bootstrap', 'bills'],
       'a ledger entry in the run brings the bootstrap refetch back');
 
+    // A send the server will not take keeps its mark, even when the refetch
+    // after it succeeds: the item is still unsent (spec §5.4; Review Focus 5).
+    answers.setBillFunded = { ok: false, kind: 'server', error: 'The sheet is busy right now. Try again in a moment.' };
+    sent.length = 0;
+    await setBox('5', '2026-09-30', 'Vin', false);
+    assert.equal((await db.listQueue()).length, 1, 'the refused tick stays queued');
+    assert.ok(textOf(box('5', '2026-09-30', 'Vin').parent).includes('pending'),
+      'and wears its pending mark, though bootstrap and bills both answered');
     navigator.onLine = false;
-    fireWindow('offline');
+    fireWindow('offline'); // clears the retry timer the failed run left running
+    for (const q of await db.listQueue()) await db.removeQueued(q.id);
+    answers.setBillFunded = { ok: true, data: {} };
 
     // ── Carry and Start go straight to the server, online only (spec §4.3) ──
     navigator.onLine = true;

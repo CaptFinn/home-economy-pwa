@@ -60,7 +60,7 @@ const bills = {
 // Which bills request is still wanted. A reply that lands after the person
 // has moved to another scope is for a view nobody is looking at any more.
 let billsSeq = 0;
-const conn = { online: navigator.onLine, syncing: false, at: null, error: '' };
+const conn = { online: navigator.onLine, syncing: false, at: null, error: '', unsent: false };
 
 // 'mobile' or 'desktop' (stage 4 spec §3), per device. applyLayout draws
 // it; setLayout is the account menu's switch, which also remembers it.
@@ -617,6 +617,11 @@ export async function sync() {
     // Anything still queued means the run did not clear it — a failure, a
     // stop, or a token that needs a person. Keep trying on our own.
     if (queue.length) scheduleRetry();
+    // Stage 5 spec §5.4: a send the server would not take can leave conn.error
+    // empty (the refetch after it may well succeed), so the Bills tab asks
+    // this instead. Not set when a re-run is about to start: that item is
+    // about to be sent, not stuck.
+    conn.unsent = !syncAgain && queue.some((i) => i.state === 'pending');
     render();
     if (syncAgain) { syncAgain = false; sync(); }
   }

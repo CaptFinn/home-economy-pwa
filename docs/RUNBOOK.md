@@ -367,3 +367,56 @@ and plan's Task 7 say otherwise and are superseded by this note.
    out of Google in the browser): the account button has an amber dot, the
    menu offers Sign in again, and signing in from there works — including from
    the Bills tab.
+
+# Stage 5 runbook — stay signed in, and feel fast
+
+`sw.js`'s `CACHE` is `home-economy-v19`: close and reopen the installed app
+once on each phone to pick it up. **This stage has a server half.** Client and
+server can go live in either order; the monthly sign-in starts at the first
+sign-in after both are.
+
+## Deploy the server (once)
+
+1. In `Home_Economy_PWA/home-economy-app`: `clasp push`, then
+   `clasp version "Stage 5: session tokens"`. **Not** `clasp redeploy`.
+2. Make a secret and keep it out of the repo and out of chat:
+
+   ```bash
+   openssl rand -base64 36
+   ```
+
+   In the Apps Script web editor: **Project Settings → Script Properties →
+   Add script property**, name `SESSION_SECRET`, value the output above.
+3. **Deploy → Manage deployments → `Api-deployment`** (the id in `config.js`)
+   **→ Edit → Version: the new one → Deploy.** Check it still says
+   **Execute as: Me** and **Who has access: Anyone**.
+4. Confirm it answers as the API, not as the household app:
+
+   ```bash
+   curl -sL -X POST -H 'Content-Type: text/plain' -d '{}' "$(node -e "import('./config.js').then(m => console.log(m.API_URL))")"
+   ```
+
+   Expected: `{"ok":false,"error":"Sign in again to continue.","kind":"auth"}`.
+   A 401 or an HTML page means the access settings were reset: go back to
+   step 3.
+
+## Verify
+
+0. **Before anything is deployed (optional, confirms the diagnosis):** note
+   the time you sign in on the current app. It asks for a sign-in again
+   within about an hour.
+1. After both halves are live, sign in once. Leave the app untouched for over
+   an hour, then tick a bill. No sign-in prompt, and the tick lands.
+2. The next day, open the app and tick. Still no prompt.
+3. Tick a bill on Wi-Fi and on mobile data: the box looks done at once and
+   nothing flickers back when the sync lands.
+4. Tick two boxes in quick succession: both land, and the second does not wait
+   several seconds.
+5. Airplane mode: a tick shows `pending` and the offline hint; reconnect and
+   it clears.
+6. Remove your address from the `ALLOWED_EMAILS` Script Property (then put it
+   back): the next action is refused with the access-list message.
+7. A sign-in against the old server version (before step 3 above) still works
+   for the hour, as it does today.
+8. The Ledger tab: a new entry still shows in the pending list until it
+   syncs, and the balance still says `includes pending`.

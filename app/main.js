@@ -6,7 +6,7 @@ import { enqueue, drain } from './queue.js';
 import * as api from './api.js';
 import { currentAuth, signIn } from './auth.js';
 import { entryFrom, validateEntry, editFields, renderEntry, renderPending, renderRecent, renderLog, renderConn, renderLedgers, nextRetryDelay, storedLayout } from './ui.js';
-import { renderBills, overlayQueued, billsKey, SWAP_PAYDAY, SWAP_CYCLE, nextCycle } from './bills.js';
+import { renderBills, overlayQueued, billsKey, SWAP_PAYDAY, SWAP_CYCLE, nextCycle, onlyBillOps, lastCycleViews } from './bills.js';
 
 // memoryStore()'s shape, over the real IndexedDB functions — queue.js and
 // this module don't need to know the difference.
@@ -507,8 +507,12 @@ async function onConnClick() {
 
 // Guards sync() against overlap: two runs racing would drain the same queue
 // twice and could double-send an item mid-flight before the first run
-// removes it.
+// removes it. A call that arrives mid-run is not dropped, though: drain read
+// the queue when it started, so an item queued since would otherwise wait for
+// the retry timer (5 s at the least). `syncAgain` makes the run that is
+// finishing start one more (stage 5 spec §5.2).
 let syncing = false;
+let syncAgain = false;
 
 /** Sends everything queued, oldest first, then refreshes the cached
     bootstrap view. A queued item is removed from the queue only once
@@ -517,7 +521,7 @@ let syncing = false;
     point of view before the server actually has it: the queue itself, still
     showing the item, is the only place that fact would otherwise be lost. */
 export async function sync() {
-  if (syncing) return;
+  if (syncing) { syncAgain = true; return; }
   syncing = true;
   conn.syncing = true;
   conn.needsAuth = false; // each run starts by assuming the token is still good
@@ -554,27 +558,46 @@ export async function sync() {
       return;
     }
 
-    const res = await api.call('bootstrap', {}, auth.token);
-    if (!res.ok) {
-      // Only a real success may move the clock. Stamping conn.at here
-      // regardless is what let the line read "synced 15:50" while the view
-      // was still null and the form stayed dead — a status that lies is
-      // worse than no status, because it sends you looking in the wrong
-      // place. An empty queue means drain never saw this rejection, so
-      // this is the only chance to report it.
-      if (res.kind === 'auth') conn.needsAuth = true;
-      conn.error = res.error || 'Could not reach the sheet.';
-      return;
-    }
+    // Stage 5 spec §5.3: a run that sent only bill ticks and notes, all of
+    // them accepted, changed no balance, and the server answered each with
+    // the whole updated cycle. Use the replies instead of asking again.
+    // Anything else (a ledger entry, a parked or stopped run, or no sends at
+    // all) takes the full refetch below, as it always did.
+    const fromReplies = !result.stopped && !result.parked
+      && onlyBillOps(result.replies.map((r) => r.item));
+    let shown = false; // the reply already put the scope on screen
+    if (fromReplies) {
+      for (const data of lastCycleViews(result.replies)) {
+        await putView(billsKey('cycle', data.cycle), data);
+        if (tab === 'bills' && bills.mode === 'cycle' && bills.scopes.cycle === data.cycle) {
+          billsSeq += 1; // a fetch still in flight predates this reply
+          showBills(data);
+          shown = true;
+        }
+      }
+    } else {
+      const res = await api.call('bootstrap', {}, auth.token);
+      if (!res.ok) {
+        // Only a real success may move the clock. Stamping conn.at here
+        // regardless is what let the line read "synced 15:50" while the view
+        // was still null and the form stayed dead — a status that lies is
+        // worse than no status, because it sends you looking in the wrong
+        // place. An empty queue means drain never saw this rejection, so
+        // this is the only chance to report it.
+        if (res.kind === 'auth') conn.needsAuth = true;
+        conn.error = res.error || 'Could not reach the sheet.';
+        return;
+      }
 
-    await putView('bootstrap', res.data);
-    view = res.data;
+      await putView('bootstrap', res.data);
+      view = res.data;
+    }
 
     // Spec §4.2: with the Bills tab open, its scope is refetched too, so
     // pending marks clear against the server's own figures. A failure
     // leaves the cached view up and says so on the connection line, as a
     // failed bootstrap does, and does not move the clock.
-    if (tab === 'bills') {
+    if (tab === 'bills' && !shown) {
       const b = await fetchBills(auth.token);
       if (!b.ok) {
         if (b.kind === 'auth') conn.needsAuth = true;
@@ -595,6 +618,7 @@ export async function sync() {
     // stop, or a token that needs a person. Keep trying on our own.
     if (queue.length) scheduleRetry();
     render();
+    if (syncAgain) { syncAgain = false; sync(); }
   }
 }
 

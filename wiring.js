@@ -1112,6 +1112,96 @@ const { enqueue } = await import('./app/queue.js');
     assert.ok(!textOf(billsEl).includes('could not be found'), 'and it leaves the list');
     assert.equal(billsEl.querySelector('.parked-list'), null, 'and with nothing left refused, no empty panel stays');
 
+    // ── a bill-only sync uses the server's reply, and a tap made mid-sync
+    // is not left waiting (stage 5 spec §5.2, §5.3; Review Focus 3, 4) ────
+    navigator.onLine = true;
+    fireWindow('online'); // an empty queue: bootstrap, then the scope, as before
+    await settle();
+
+    const setBox = async (row, payday, payer, on) => {
+      const b = box(row, payday, payer);
+      b.checked = on;
+      billsEl.dispatch('change', { target: b });
+      await settle();
+    };
+    // The stub server keeps its own copy of the cycle and answers every tick
+    // with all of it, as setBillFunded does. `notes` carries a counter so a
+    // reply's own text can be told from the cache it replaced.
+    const server = structuredClone(fresh);
+    let replies = 0;
+    answers.setBillFunded = (args) => {
+      if (args.row === 9) return { ok: true, data: { ...cycleView, cycle: '2026-08', rows: [] } };
+      const s = server.rows[0].schedule.find((x) => x.payday === args.payday);
+      s.paid[server.payers.indexOf(args.payer)] = args.funded;
+      replies += 1;
+      server.rows[0].notes = 'reply ' + replies;
+      return { ok: true, data: structuredClone(server) };
+    };
+    const poison = { ok: false, kind: 'server', error: 'must not be asked' };
+    answers.bootstrap = poison;
+    answers.bills = poison;
+
+    // One tick is one round trip, and the reply is what is on screen.
+    sent.length = 0;
+    await setBox('5', '2026-09-15', 'Venice', true);
+    assert.deepEqual(sent.map((b) => b.op), ['setBillFunded'],
+      'a tick costs one round trip: no bootstrap, no bills refetch');
+    assert.ok(textOf(billsEl).includes('reply 1'), "the reply's own view is what is on screen");
+    assert.equal(box('5', '2026-09-15', 'Venice').checked, true, 'and it carries the tick');
+    assert.ok(!textOf(billsEl).includes('pending'), 'with no pending mark left');
+    assert.equal((await db.getView('bills:cycle:2026-09')).rows[0].notes, 'reply 1', 'and it is cached');
+    assert.equal((await db.listQueue()).length, 0, 'the queue is empty');
+
+    // A tap made while a send is in flight is sent right after it, in tap
+    // order, and the later tap wins — without waiting for the retry timer.
+    const realFetch = fetchImpl;
+    let release;
+    const held = new Promise((r) => { release = r; });
+    let holding = true;
+    fetchImpl = async (url, req) => {
+      if (holding && JSON.parse(req.body).op === 'setBillFunded') { holding = false; await held; }
+      return realFetch(url, req);
+    };
+    sent.length = 0;
+    await setBox('5', '2026-09-30', 'Vin', true);      // its send is held
+    await setBox('5', '2026-09-15', 'Venice', false);  // tapped mid-sync
+    assert.equal(box('5', '2026-09-30', 'Vin').checked, true, 'the first tap shows');
+    assert.equal(box('5', '2026-09-15', 'Venice').checked, false, 'and so does the second');
+    release();
+    for (let i = 0; i < 4; i += 1) await settle();
+    fetchImpl = realFetch;
+    assert.deepEqual(sent.map((b) => [b.op, b.args.payer, b.args.funded]),
+      [['setBillFunded', 'Vin', true], ['setBillFunded', 'Venice', false]],
+      'both were sent, in tap order, with no refetch between or after');
+    assert.ok(textOf(billsEl).includes('reply 3'), 'the last reply is what is on screen');
+    assert.equal(box('5', '2026-09-30', 'Vin').checked, true, 'Vin stays ticked');
+    assert.equal(box('5', '2026-09-15', 'Venice').checked, false, 'and Venice is unticked, the later tap');
+    assert.equal((await db.listQueue()).length, 0, 'nothing is left queued');
+
+    // From the payday view the reply is for a cycle that is not on screen:
+    // cached for later, and the payday on screen is still refetched.
+    await pickScope(SWAP_PAYDAY);
+    sent.length = 0;
+    await tickBox('9', '2026-09-15', 'Vin');
+    assert.deepEqual(sent.map((b) => b.op), ['setBillFunded', 'payday'],
+      'a reply for a cycle not on screen does not stand in for the view that is');
+    assert.ok(await db.getView('bills:cycle:2026-08'), "but the reply's cycle is cached for next time");
+    answers.bootstrap = { ok: true, data: bootstrapView };
+    answers.bills = { ok: true, data: fresh };
+    await pickScope(SWAP_CYCLE);
+
+    // A run that includes a ledger entry still refetches balances.
+    await db.putQueued({ id: 'led-1', op: 'addEntry', at: Date.now(), state: 'pending',
+      args: { entry: ui.entryFrom({ ledger: 'Bills', date: '2026-09-18', account: 'Groceries',
+        type: 'Withdrawal', source: 'SM', description: 'weekly', amount: '10' }, 'e-1') } });
+    sent.length = 0;
+    await setBox('5', '2026-09-15', 'Venice', true);
+    assert.deepEqual(sent.map((b) => b.op), ['addEntry', 'setBillFunded', 'bootstrap', 'bills'],
+      'a ledger entry in the run brings the bootstrap refetch back');
+
+    navigator.onLine = false;
+    fireWindow('offline');
+
     // ── Carry and Start go straight to the server, online only (spec §4.3) ──
     navigator.onLine = true;
     fireWindow('online'); // its sync finds an empty queue: bootstrap, then the scope

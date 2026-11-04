@@ -1350,6 +1350,116 @@ const { enqueue } = await import('./app/queue.js');
     navigator.onLine = false;
     fireWindow('offline');
 
+    // ── connect a bill to a ledger (stage 5 spec C1 §4; Review Focus 5) ───
+    navigator.onLine = true;
+    fireWindow('online');
+    await settle();
+    const tap = (attr, row) => find(billsEl, (e) => e.dataset[attr] === String(row));
+    const withLink = (over) => { const v = structuredClone(fresh); Object.assign(v.rows[0], over); return v; };
+    const reply = (data) => ({ ok: true, data });
+
+    assert.ok(tap('connectRow', 5), 'an unconnected bill offers Connect to ledger');
+    assert.equal(tap('payRow', 5), null, 'and no Mark paid yet');
+
+    // The editor: the ledgers, and the chosen ledger's accounts as suggestions.
+    answers.accountsOf = (args) => reply({ ledger: args.ledger,
+      accounts: args.ledger === 'Bills' ? ['Electricity', 'Groceries'] : ['Savings'] });
+    sent.length = 0;
+    billsEl.dispatch('click', { target: tap('connectRow', 5) });
+    await settle();
+    const ledgerSel = () => billsEl.querySelector('#link-ledger');
+    const suggestions = () => billsEl.querySelector('#link-accounts').children.map((o) => o.value);
+    assert.deepEqual(ledgerSel().children.map((o) => o.value), bootstrapView.ledgers, 'the picker lists the ledgers');
+    assert.equal(ledgerSel().value, 'Bills', 'starting on the one on screen');
+    assert.deepEqual(suggestions(), ['Electricity', 'Groceries'], "the datalist holds that ledger's accounts");
+    ledgerSel().value = 'Account 1';
+    billsEl.dispatch('change', { target: ledgerSel() });
+    await settle();
+    assert.deepEqual(suggestions(), ['Savings'], 'changing the ledger refetches its accounts');
+    ledgerSel().value = 'Bills';
+    billsEl.dispatch('change', { target: ledgerSel() });
+    await settle();
+
+    // An account is required; nothing is sent without one.
+    sent.length = 0;
+    billsEl.dispatch('click', { target: billsEl.querySelector('#link-save') });
+    await settle();
+    assert.ok(textOf(billsEl).includes('Pick an account.'), 'a blank account is refused on the hint line');
+    assert.equal(sent.filter((b) => b.op === 'connectBill').length, 0, 'without a request');
+
+    // Save connects, shows the reply, and a sync follows to refresh the ledger.
+    const connected = withLink({ ledger: 'Bills', account: 'Electricity' });
+    answers.connectBill = reply(connected);
+    answers.bills = reply(connected);
+    const acct = billsEl.querySelector('#link-account');
+    acct.value = 'Electricity';
+    billsEl.dispatch('input', { target: acct });
+    sent.length = 0;
+    billsEl.dispatch('click', { target: billsEl.querySelector('#link-save') });
+    await settle();
+    await settle();
+    assert.deepEqual(sent.find((b) => b.op === 'connectBill').args,
+      { cycle: '2026-09', row: 5, name: 'Rent', ledger: 'Bills', account: 'Electricity' },
+      'connect names the bill, the ledger and the account');
+    assert.ok(textOf(billsEl).includes('→ Bills / Electricity'), 'the card shows where it points');
+    assert.equal(billsEl.querySelector('#link-save'), null, 'the editor closes');
+    assert.ok(sent.some((b) => b.op === 'bootstrap'), 'and the ledger is refreshed by a sync');
+
+    // Mark paid and Undo.
+    const paidView = withLink({ ledger: 'Bills', account: 'Electricity', paid: '2026-09-20 10:00~vin' });
+    answers.markBillPaid = (args) => reply(args.paid ? paidView : connected);
+    answers.bills = reply(paidView);
+    sent.length = 0;
+    billsEl.dispatch('click', { target: tap('payRow', 5) });
+    await settle();
+    await settle();
+    assert.deepEqual(sent.find((b) => b.op === 'markBillPaid').args,
+      { cycle: '2026-09', row: 5, name: 'Rent', paid: true }, 'Mark paid names the bill');
+    assert.ok(textOf(billsEl).includes('Paid ✓ sep 20'), 'the card says when it was paid');
+    assert.equal(tap('payRow', 5), null, 'Mark paid is gone');
+    answers.bills = reply(connected);
+    sent.length = 0;
+    billsEl.dispatch('click', { target: tap('unpayRow', 5) });
+    await settle();
+    await settle();
+    assert.equal(sent.find((b) => b.op === 'markBillPaid').args.paid, false, 'Undo sends paid: false');
+    assert.ok(!textOf(billsEl).includes('Paid ✓'), 'and the mark goes');
+    assert.ok(tap('payRow', 5), 'Mark paid is back');
+
+    // A tick on a connected bill queues exactly as before, but its run also
+    // refetches the ledger: the server posted a deposit.
+    answers.setBillFunded = reply(connected);
+    sent.length = 0;
+    await setBox('5', '2026-09-15', 'Venice', true);
+    await settle();
+    assert.deepEqual(sent.map((b) => b.op), ['setBillFunded', 'bootstrap'],
+      'a connected bill tick refetches bootstrap, and still not the bills');
+    assert.deepEqual(sent[0].args, { cycle: '2026-09', row: 5, name: 'Rent', payday: '2026-09-15', funded: true, payer: 'Venice' },
+      'with the same args as before');
+
+    // Offline, every link action is disabled.
+    navigator.onLine = false;
+    fireWindow('offline');
+    assert.equal(tap('payRow', 5).disabled, true, 'Mark paid is disabled offline');
+    assert.equal(tap('disconnectRow', 5).disabled, true, 'and Disconnect');
+    navigator.onLine = true;
+    fireWindow('online');
+    await settle();
+
+    // Disconnect.
+    answers.disconnectBill = reply(fresh);
+    answers.bills = reply(fresh);
+    sent.length = 0;
+    billsEl.dispatch('click', { target: tap('disconnectRow', 5) });
+    await settle();
+    await settle();
+    assert.deepEqual(sent.find((b) => b.op === 'disconnectBill').args, { cycle: '2026-09', row: 5, name: 'Rent' },
+      'Disconnect names the bill');
+    assert.ok(tap('connectRow', 5), 'and Connect to ledger is offered again');
+    answers.setBillFunded = { ok: true, data: {} };
+    navigator.onLine = false;
+    fireWindow('offline');
+
     // ── Carry and Start go straight to the server, online only (spec §4.3) ──
     navigator.onLine = true;
     fireWindow('online'); // its sync finds an empty queue: bootstrap, then the scope

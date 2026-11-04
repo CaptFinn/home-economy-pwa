@@ -6,7 +6,7 @@ import { enqueue, drain } from './queue.js';
 import * as api from './api.js';
 import { currentAuth, signIn } from './auth.js';
 import { entryFrom, validateEntry, editFields, renderEntry, renderPending, renderRecent, renderLog, renderConn, renderLedgers, nextRetryDelay, storedLayout } from './ui.js';
-import { renderBills, overlayQueued, billsKey, SWAP_PAYDAY, SWAP_CYCLE, nextCycle, onlyBillOps, lastCycleViews } from './bills.js';
+import { renderBills, overlayQueued, billsKey, SWAP_PAYDAY, SWAP_CYCLE, nextCycle, onlyBillOps, lastCycleViews, anyLinked } from './bills.js';
 
 // memoryStore()'s shape, over the real IndexedDB functions — queue.js and
 // this module don't need to know the difference.
@@ -53,12 +53,15 @@ let draft = null;
 // whose note editor is open, and `noteDraft` what is typed there, kept
 // across repaints as `draft` is for the entry form. `editingBill` is the row
 // whose amount / due-date editor is open, `billDraft` its typed values, kept
-// the same way (stage 5 spec B).
+// the same way (stage 5 spec B). `connecting` is the row whose connect-to-ledger
+// editor is open, `linkDraft` what is chosen in it and `linkAccounts` the
+// suggestions for the chosen ledger (stage 5 spec C1).
 let tab = 'ledger';
 const bills = {
   mode: 'cycle', scopes: { cycle: '', payday: '' }, options: { cycle: [], payday: [] },
   view: null, loading: false, error: '', busy: '', editingNote: null, noteDraft: '',
   editingBill: null, billDraft: { amount: '', due: '' },
+  connecting: null, linkDraft: { ledger: '', account: '' }, linkAccounts: [],
 };
 // Which bills request is still wanted. A reply that lands after the person
 // has moved to another scope is for a view nobody is looking at any more.
@@ -132,7 +135,7 @@ function render() {
   }
 
   if (tab === 'bills') {
-    renderBills({ bills, queue, conn });
+    renderBills({ bills, queue, conn, ledgers: view ? view.ledgers : [] });
   } else {
     // On Mobile the log takes the whole screen (stage 2 spec §3.2); on
     // Desktop it takes the side region and the form stays (stage 4 §3.4).
@@ -578,7 +581,11 @@ export async function sync() {
           shown = true;
         }
       }
-    } else {
+    }
+    // A connected bill's deposit changed a ledger balance (stage 5 spec C1 §4),
+    // so a run whose replies show one refetches the bootstrap even though it
+    // is otherwise bill-only.
+    if (!fromReplies || anyLinked(result.replies)) {
       const res = await api.call('bootstrap', {}, auth.token);
       if (!res.ok) {
         // Only a real success may move the clock. Stamping conn.at here
@@ -740,6 +747,7 @@ async function loadBills() {
   bills.error = '';
   bills.editingNote = null;
   bills.editingBill = null;
+  bills.connecting = null;
   bills.loading = navigator.onLine;
   render();
   if (!navigator.onLine) return;
@@ -783,6 +791,12 @@ async function onScope(value) {
 function onBillsChange(event) {
   const t = event.target;
   if (t.dataset && t.dataset.tickRow !== undefined) onTick(t);
+  if (t.id === 'link-ledger') {
+    bills.linkDraft.ledger = t.value;
+    bills.linkAccounts = [];
+    render();
+    fetchLinkAccounts();
+  }
 }
 
 /** A tick or a note, queued like an entry even online (spec §4.1): one
@@ -810,6 +824,7 @@ function openNote(row) {
   if (!r) return;
   bills.editingNote = row;
   bills.editingBill = null;
+  bills.connecting = null;
   bills.noteDraft = r.notes || ''; // the newest queued text, when there is one
   render();
 }
@@ -876,6 +891,7 @@ function openBillEdit(row) {
   const r = bills.view && bills.view.rows.find((x) => x.row === row);
   if (!r) return;
   bills.editingNote = null;
+  bills.connecting = null;
   bills.editingBill = row;
   bills.billDraft = { amount: Number(r.amount) > 0 ? String(r.amount) : '', due: r.due_date || '' };
   bills.error = '';
@@ -897,6 +913,60 @@ async function saveBill() {
   if (ok) { bills.editingBill = null; render(); }
 }
 
+// Which accounts request is still wanted: changing the ledger in the connect
+// editor makes an earlier answer stale, as billsSeq does for scopes.
+let linkSeq = 0;
+
+async function fetchLinkAccounts() {
+  const ledger = bills.linkDraft.ledger;
+  const seq = ++linkSeq;
+  const auth = await currentAuth();
+  if (!ledger || !auth || !auth.token || !navigator.onLine) return;
+  const res = await api.call('accountsOf', { ledger }, auth.token);
+  if (seq !== linkSeq || bills.connecting === null || !res.ok) return;
+  bills.linkAccounts = res.data.accounts || [];
+  render();
+}
+
+/** Connect to ledger: open the editor on the ledger now on screen. */
+function openConnect(row) {
+  const r = bills.view && bills.view.rows.find((x) => x.row === row);
+  if (!r) return;
+  bills.editingNote = null;
+  bills.editingBill = null;
+  bills.connecting = row;
+  bills.linkDraft = { ledger: (view && view.ledger) || (view && view.ledgers && view.ledgers[0]) || '', account: '' };
+  bills.linkAccounts = [];
+  bills.error = '';
+  render();
+  fetchLinkAccounts();
+}
+
+/** A link action that changes what the ledger holds also refreshes it:
+    a sync with an empty queue refetches the bootstrap and the open scope. */
+async function linkAction(kind, op, args, fallback) {
+  const ok = await billsAction(kind, op, args, fallback);
+  if (ok && kind !== 'disconnect') sync();
+  return ok;
+}
+
+async function saveLink() {
+  const r = bills.view && bills.view.rows.find((x) => x.row === bills.connecting);
+  if (!r) return;
+  const { ledger, account } = bills.linkDraft;
+  if (!ledger) { bills.error = 'Pick a ledger.'; render(); return; }
+  if (!account.trim()) { bills.error = 'Pick an account.'; render(); return; }
+  const ok = await linkAction('connect', 'connectBill',
+    { cycle: bills.view.cycle, row: r.row, name: r.name, ledger, account: account.trim() },
+    'Could not connect that bill.');
+  if (ok) { bills.connecting = null; render(); }
+}
+
+function billTarget(row) {
+  const r = bills.view && bills.view.rows.find((x) => x.row === row);
+  return r ? { cycle: bills.view.cycle, row: r.row, name: r.name } : null;
+}
+
 function onCarry(row) {
   if (bills.view) billsAction('carry', 'carryBill', { cycle: bills.view.cycle, row }, 'Could not carry that bill.');
 }
@@ -912,6 +982,28 @@ function onBillsClick(event) {
   if (discard) { removeItem(discard.dataset.removeId); return; }
   const note = t.closest('[data-note-row]');
   if (note) { openNote(Number(note.dataset.noteRow)); return; }
+  const connect = t.closest('[data-connect-row]');
+  if (connect) { openConnect(Number(connect.dataset.connectRow)); return; }
+  if (t.closest('#link-cancel')) { bills.connecting = null; bills.error = ''; render(); return; }
+  if (t.closest('#link-save')) { saveLink(); return; }
+  const off = t.closest('[data-disconnect-row]');
+  if (off) {
+    const target = billTarget(Number(off.dataset.disconnectRow));
+    if (target) linkAction('disconnect', 'disconnectBill', target, 'Could not disconnect that bill.');
+    return;
+  }
+  const pay = t.closest('[data-pay-row]');
+  if (pay) {
+    const target = billTarget(Number(pay.dataset.payRow));
+    if (target) linkAction('pay', 'markBillPaid', { ...target, paid: true }, 'Could not mark that bill paid.');
+    return;
+  }
+  const unpay = t.closest('[data-unpay-row]');
+  if (unpay) {
+    const target = billTarget(Number(unpay.dataset.unpayRow));
+    if (target) linkAction('unpay', 'markBillPaid', { ...target, paid: false }, 'Could not undo that.');
+    return;
+  }
   const edit = t.closest('[data-edit-row]');
   if (edit) { openBillEdit(Number(edit.dataset.editRow)); return; }
   if (t.closest('#bill-cancel')) { bills.editingBill = null; bills.error = ''; render(); return; }
@@ -997,6 +1089,7 @@ export async function boot() {
   document.getElementById('bills').addEventListener('click', onBillsClick);
   document.getElementById('bills').addEventListener('input', (e) => {
     if (e.target.id === 'note-input') bills.noteDraft = e.target.value;
+    if (e.target.id === 'link-account') bills.linkDraft.account = e.target.value;
     if (e.target.id === 'edit-amount') bills.billDraft.amount = e.target.value;
     if (e.target.id === 'edit-due') bills.billDraft.due = e.target.value;
   });

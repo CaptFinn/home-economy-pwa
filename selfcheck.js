@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import * as fmt from './app/fmt.js';
 import { memoryStore } from './app/db.js';
 import { enqueue, drain, pendingFor } from './app/queue.js';
-import { overlayQueued, billsKey, nextCycle, onlyBillOps, lastCycleViews, isStuck } from './app/bills.js';
+import { overlayQueued, billsKey, nextCycle, onlyBillOps, lastCycleViews, isStuck, anyLinked } from './app/bills.js';
 
 assert.equal(fmt.peso(1500), '₱1,500.00', 'pesos get a sign-free peso format');
 assert.equal(fmt.peso(0), '₱0.00', 'zero formats');
@@ -370,6 +370,11 @@ console.log('ui self-check passed');
   assert.equal(isStuck({ online: true, needsAuth: true }), true, 'signed out is stuck');
   assert.equal(isStuck({ online: true, error: 'Could not reach the sheet.' }), true, 'a failed sync is stuck');
   assert.equal(isStuck({ online: true, unsent: true }), true, 'a run that left an item unsent is stuck');
+
+  const rowsView = (...ledgers) => ({ cycle: '2026-09', rows: ledgers.map((l) => ({ ledger: l })) });
+  assert.equal(anyLinked([{ data: rowsView('', 'Home') }]), true, 'a reply with a connected bill is linked');
+  assert.equal(anyLinked([{ data: rowsView('', '') }, { data: rowsView('') }]), false, 'none connected is not');
+  assert.equal(anyLinked([{ data: {} }, { data: null }]), false, 'nor are replies that are not cycle views');
 }
 
 console.log('bills self-check passed');

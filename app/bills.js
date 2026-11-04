@@ -41,6 +41,13 @@ export function isStuck(conn) {
   return !conn.online || !!conn.needsAuth || !!conn.error || !!conn.unsent;
 }
 
+/** Does any reply show a bill connected to a ledger (stage 5 spec C1 §4)? Its
+    tick posted a deposit, so the ledger balances changed and the run must
+    refetch the bootstrap even though it is otherwise bill-only. */
+export function anyLinked(replies) {
+  return replies.some(({ data }) => data && Array.isArray(data.rows) && data.rows.some((r) => r.ledger));
+}
+
 /** The views-store key for one scope (spec §3). */
 export function billsKey(mode, scope) {
   return 'bills:' + mode + ':' + scope;
@@ -301,6 +308,81 @@ function billEditor(ctx) {
   return box;
 }
 
+/** The connect editor (stage 5 spec C1 §4): which ledger, which account. The
+    datalist is the chosen ledger's existing accounts, fetched by main.js; any
+    other name is fine, since an account is created by its first deposit. */
+function linkEditor(ctx) {
+  const box = el('div', 'bill-editor');
+  const pick = el('label', 'bill-field');
+  pick.appendChild(el('span', null, 'Ledger'));
+  const select = el('select', 'bill-input');
+  select.id = 'link-ledger';
+  ctx.ledgers.forEach((l) => {
+    const o = el('option', null, l);
+    o.value = l;
+    select.appendChild(o);
+  });
+  select.value = ctx.linkDraft.ledger;
+  pick.appendChild(select);
+  box.appendChild(pick);
+
+  const acct = el('label', 'bill-field');
+  acct.appendChild(el('span', null, 'Account'));
+  const input = el('input', 'bill-input');
+  input.id = 'link-account';
+  input.type = 'text';
+  input.value = ctx.linkDraft.account;
+  input.setAttribute('list', 'link-accounts');
+  input.setAttribute('maxlength', '60');
+  acct.appendChild(input);
+  const list = el('datalist');
+  list.id = 'link-accounts';
+  ctx.linkAccounts.forEach((a) => {
+    const o = el('option');
+    o.value = a;
+    list.appendChild(o);
+  });
+  acct.appendChild(list);
+  box.appendChild(acct);
+
+  const save = button('linkish', 'Save');
+  save.id = 'link-save';
+  save.disabled = !ctx.canAct;
+  box.appendChild(save);
+  const cancel = button('linkish', 'Cancel');
+  cancel.id = 'link-cancel';
+  box.appendChild(cancel);
+  return box;
+}
+
+/** Where the bill points, and Mark paid (stage 5 spec C1 §4). All online only. */
+function linkLine(r, ctx) {
+  const line = el('div', 'bill-link');
+  if (ctx.connecting === r.row) {
+    line.appendChild(linkEditor(ctx));
+    return line;
+  }
+  const act = (cls, text, attr) => {
+    const b = button(cls, text);
+    b.dataset[attr] = String(r.row);
+    b.disabled = !ctx.canAct;
+    line.appendChild(b);
+  };
+  if (r.ledger) {
+    line.appendChild(el('span', 'link-target', '→ ' + r.ledger + ' / ' + r.account));
+    act('linkish', 'Disconnect', 'disconnectRow');
+  } else {
+    act('linkish', 'Connect to ledger', 'connectRow');
+  }
+  if (r.paid) {
+    line.appendChild(el('span', 'paid-mark', 'Paid ✓ ' + day(String(r.paid).slice(0, 10))));
+    act('linkish', 'Undo', 'unpayRow');
+  } else if (r.ledger && !r.pending) {
+    act('carry-btn', 'Mark paid', 'payRow');
+  }
+  return line;
+}
+
 /** One card per bill (spec §2.1): head, schedule, progress, note. */
 function billCard(view, r, ctx) {
   const card = el('div', 'bill-card panel');
@@ -337,6 +419,7 @@ function billCard(view, r, ctx) {
     card.appendChild(foot);
   }
 
+  card.appendChild(linkLine(r, ctx));
   card.appendChild(noteLine(view, r, ctx));
   return card;
 }
@@ -405,6 +488,10 @@ function parkedRow(item) {
 }
 
 const OFFLINE_HINT = "You're offline — ticks and notes sync when you reconnect; carrying a bill, editing one and starting a cycle need a connection.";
+// What the hint line says while an online-only action is in flight; Start's
+// own wording (it names the cycle) is built where it is used.
+const BUSY_TEXT = { carry: 'Carrying…', edit: 'Saving…', connect: 'Connecting…',
+                    disconnect: 'Disconnecting…', pay: 'Saving…', unpay: 'Saving…' };
 const SIGNED_OUT_HINT = 'Sign in again to carry a bill or start a cycle.';
 
 /**
@@ -479,7 +566,9 @@ export function renderBills(state) {
     side.appendChild(totals(view.totals, true));
   } else {
     const ctx = { canAct, editingNote: b.editingNote, noteDraft: b.noteDraft, stuck,
-                  editingBill: b.editingBill, billDraft: b.billDraft };
+                  editingBill: b.editingBill, billDraft: b.billDraft,
+                  connecting: b.connecting, linkDraft: b.linkDraft, linkAccounts: b.linkAccounts,
+                  ledgers: state.ledgers || [] };
     view.rows.forEach((r) => rowsEl.appendChild(billCard(view, r, ctx)));
     if (view.cutoffTotals && view.cutoffTotals.length) side.appendChild(cutoffPanel(view.cutoffTotals));
     side.appendChild(totals(view.totals, false));
@@ -500,8 +589,7 @@ export function renderBills(state) {
     hint.textContent = b.error;
     hint.setAttribute('data-state', 'error');
   } else if (b.busy) {
-    hint.textContent = b.busy === 'carry' ? 'Carrying…' : b.busy === 'edit' ? 'Saving…'
-      : 'Starting ' + nextCycle(view && view.cycle) + '…';
+    hint.textContent = BUSY_TEXT[b.busy] || 'Starting ' + nextCycle(view && view.cycle) + '…';
   } else if (!state.conn.online) {
     hint.textContent = OFFLINE_HINT;
   } else if (state.conn.needsAuth) {

@@ -808,3 +808,17 @@ body.desktop .rail { padding-left: 0; padding-right: 0; }
   border: none;
   border-radius: var(--radius-sm);
 }
+
+/* Where a bill points, and Mark paid (stage 5 spec C1). */
+.bill-link {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 6px 14px 4px 28px;
+  background: var(--surface);
+  font-size: 12px;
+}
+.link-target, .paid-mark { color: var(--muted); }
+.paid-mark { color: var(--in); }
+.bill-link .bill-editor { padding: 0; flex: 1 1 100%; }

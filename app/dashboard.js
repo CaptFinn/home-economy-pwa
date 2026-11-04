@@ -100,15 +100,18 @@ export function renderDashboard(state) {
 
   const select = document.getElementById('dash-month');
   select.textContent = '';
-  const opts = view ? view.months.slice() : [];
-  if (view && !opts.includes(view.month)) opts.unshift(view.month);
+  // The list outlives the view: a month that is not cached leaves no view to
+  // read it from, and the picker must still offer the way back.
+  const opts = (view ? view.months : dash.months).slice();
+  const shown = view ? view.month : dash.month;
+  if (shown && !opts.includes(shown)) opts.unshift(shown);
   opts.forEach((m) => {
     const o = el('option', null, monthLabel(m));
     o.value = m;
     select.appendChild(o);
   });
-  if (view) select.value = view.month;
-  select.disabled = !view;
+  if (shown) select.value = shown;
+  select.disabled = !opts.length;
 
   if (dash.error) {
     const err = el('p', 'hint', dash.error);

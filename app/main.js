@@ -69,7 +69,9 @@ const bills = {
 let billsSeq = 0;
 // The Dashboard tab (stage 5 spec C2). `month` is the one last chosen ('' asks
 // for the latest); `view` the server's answer for it, or its cached copy.
-const dash = { view: null, month: '', loading: false, error: '' };
+// `months` is the picker's list, kept from the last answer so that asking for a
+// month that is not cached (offline, or a failed fetch) does not strand it.
+const dash = { view: null, month: '', months: [], loading: false, error: '' };
 let dashSeq = 0;
 const conn = { online: navigator.onLine, syncing: false, at: null, error: '', unsent: false };
 
@@ -802,6 +804,7 @@ async function fetchDashboard(token) {
   if (seq !== dashSeq) return { ok: true }; // the person moved to another month
   if (res.ok) {
     dash.view = res.data;
+    dash.months = res.data.months;
     dash.month = res.data.month;
     dash.error = '';
     await putView(dashboardKey(res.data.month), res.data);
@@ -819,6 +822,7 @@ async function loadDashboard() {
     if (last) dash.month = last.month;
   }
   dash.view = dash.month ? await getView(dashboardKey(dash.month)) : null;
+  if (dash.view) dash.months = dash.view.months;
   dash.error = '';
   dash.loading = navigator.onLine;
   render();
@@ -1184,6 +1188,7 @@ export async function boot() {
     if (lastDash) {
       dash.month = lastDash.month;
       dash.view = await getView(dashboardKey(lastDash.month));
+      if (dash.view) dash.months = dash.view.months;
     }
   }
   const lastScope = bills.scopes[bills.mode];

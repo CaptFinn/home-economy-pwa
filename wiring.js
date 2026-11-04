@@ -1532,7 +1532,7 @@ const { enqueue } = await import('./app/queue.js');
     const monthSel = document.getElementById('dash-month');
     const trend = ['2026-05', '2026-06', '2026-07', '2026-08', '2026-09', '2026-10'];
     const dashView = (month, spent) => ({
-      month, months: ['2026-10', '2026-09'], trendMonths: trend,
+      month, months: ['2026-10', '2026-09', '2026-08'], trendMonths: trend,
       totals: { spent, in: 5000, setAside: 750, net: 300 },
       ledgers: [
         { ledger: 'Home', spent: 4850, in: 5000, setAside: 750, net: 900, trend: [0, 0, 0, 0, 800, 4850],
@@ -1583,9 +1583,9 @@ const { enqueue } = await import('./app/queue.js');
     assert.ok(text.includes('₱441.67'), "an account's monthly average");
     assert.ok(text.includes('SM Supermarket'), 'and where the money went');
     assert.ok(text.includes('Set aside'), 'the set-aside line is labelled');
-    assert.deepEqual(monthSel.children.map((o) => o.value), ['2026-10', '2026-09'], 'the picker lists the months');
+    assert.deepEqual(monthSel.children.map((o) => o.value), ['2026-10', '2026-09', '2026-08'], 'the picker lists the months');
     assert.equal(monthSel.value, '2026-10', 'on the month shown');
-    assert.deepEqual(monthSel.children.map((o) => o.textContent), ['oct 2026', 'sep 2026'], 'named as a month, not a day');
+    assert.deepEqual(monthSel.children.map((o) => o.textContent), ['oct 2026', 'sep 2026', 'aug 2026'], 'named as a month, not a day');
 
     // Choosing a month fetches it and shows it.
     asked.length = 0;
@@ -1605,6 +1605,21 @@ const { enqueue } = await import('./app/queue.js');
     await settle();
     assert.ok(textOf(dashEl).includes('₱800.00'), 'offline, the cached month is still there');
     assert.equal(asked.length, 0, 'and nothing is requested');
+
+    // Picking a month that was never cached while offline must not strand the
+    // picker: it keeps its months, and the cached one can be chosen again.
+    monthSel.value = '2026-08';
+    monthSel.dispatch('change');
+    await settle();
+    assert.deepEqual(monthSel.children.map((o) => o.value), ['2026-10', '2026-09', '2026-08'],
+      'offline, a month not cached leaves the picker with its months');
+    assert.equal(monthSel.disabled, false, 'and usable');
+    assert.equal(monthSel.value, '2026-08', 'on the month asked for');
+    assert.ok(textOf(dashEl).includes('Not loaded yet — connect to see this month.'), 'with the reason on the panel');
+    monthSel.value = '2026-09';
+    monthSel.dispatch('change');
+    await settle();
+    assert.ok(textOf(dashEl).includes('₱800.00'), 'and the cached month comes back');
 
     // A failed fetch keeps the cached view and says so.
     navigator.onLine = true;

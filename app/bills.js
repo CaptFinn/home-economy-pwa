@@ -309,6 +309,22 @@ function paydayLine(view, r, stuck) {
   return line;
 }
 
+/** The set-aside per cut-off, as the server sent it (stage 5 spec B §3): the
+    shared amount both people put aside that payday, then each person's share
+    and the cash/digital split. Nothing here is computed on the phone. */
+function cutoffPanel(list) {
+  const box = el('div', 'cutoffs panel');
+  list.forEach((c) => {
+    const row = el('div', 'cutoff');
+    row.appendChild(el('span', 'cutoff-day', day(c.payday)));
+    row.appendChild(el('span', 'cutoff-all fig', peso(c.all)));
+    row.appendChild(el('span', 'cutoff-detail', 'Both of you · each ' + peso(c.each)
+      + ' · cash ' + peso(c.cash) + ' · digital ' + peso(c.digital)));
+    box.appendChild(row);
+  });
+  return box;
+}
+
 /** The footer figures, as sent. The cycle view leads with the Apps Script
     app's progress ring (stage 4 spec §5); the payday view has none, as there. */
 function totals(t, isPayday) {
@@ -421,6 +437,7 @@ export function renderBills(state) {
   } else {
     const ctx = { canAct, editingNote: b.editingNote, noteDraft: b.noteDraft, stuck };
     view.rows.forEach((r) => rowsEl.appendChild(billCard(view, r, ctx)));
+    if (view.cutoffTotals && view.cutoffTotals.length) side.appendChild(cutoffPanel(view.cutoffTotals));
     side.appendChild(totals(view.totals, false));
   }
 

@@ -772,3 +772,16 @@ body.desktop .bills-side { grid-column: 2; position: sticky; top: 16px; }
 body.desktop .panel { margin-left: 0; margin-right: 0; }
 body.desktop .hero,
 body.desktop .rail { padding-left: 0; padding-right: 0; }
+
+/* The set-aside per cut-off on the cycle view (stage 5 spec B). */
+.cutoffs { padding: 10px 14px; }
+.cutoff {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: baseline;
+  gap: 0 12px;
+  padding: 4px 0;
+}
+.cutoff-day { color: var(--muted); }
+.cutoff-all { text-align: right; font-weight: 500; }
+.cutoff-detail { grid-column: 1 / -1; font-size: 12px; color: var(--muted); }

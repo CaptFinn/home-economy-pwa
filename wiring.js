@@ -1213,6 +1213,38 @@ const { enqueue } = await import('./app/queue.js');
     for (const q of await db.listQueue()) await db.removeQueued(q.id);
     answers.setBillFunded = { ok: true, data: {} };
 
+    // ── the Cut-offs panel (stage 5 spec B §3; Review Focus 4) ────────────
+    navigator.onLine = true;
+    fireWindow('online');
+    await settle();
+    assert.equal(billsEl.querySelector('.cutoffs'), null,
+      'a view without cutoffTotals (cached before this change) draws no panel');
+    const withCutoffs = structuredClone(fresh);
+    withCutoffs.cutoffTotals = [
+      { payday: '2026-09-15', each: 1349, cash: 0, digital: 1349, all: 2698 },
+      { payday: '2026-09-30', each: 3000.5, cash: 1000, digital: 2000.5, all: 6001 },
+    ];
+    answers.bills = { ok: true, data: withCutoffs };
+    fireWindow('online');
+    await settle();
+    const panel = billsEl.querySelector('.cutoffs');
+    assert.ok(panel, 'a view with cutoffTotals draws the panel');
+    assert.ok(billsEl.querySelector('.bills-side').children.indexOf(panel)
+      < billsEl.querySelector('.bills-side').children.indexOf(billsEl.querySelector('.totals')),
+      'above the Billed / Funded / Remaining block');
+    const panelText = textOf(panel);
+    assert.ok(panelText.includes('sep 15') && panelText.includes('₱2,698.00'), "the 15th's shared amount");
+    assert.ok(panelText.includes('sep 30') && panelText.includes('₱6,001.00'), "the 30th's shared amount");
+    assert.ok(panelText.includes('₱1,349.00') && panelText.includes('₱3,000.50'), "with each person's share");
+    assert.ok(panelText.includes('cash ₱1,000.00') && panelText.includes('digital ₱2,000.50'), 'and the cash and digital split');
+    withCutoffs.cutoffTotals = [];
+    fireWindow('online');
+    await settle();
+    assert.equal(billsEl.querySelector('.cutoffs'), null, 'an empty list draws no panel');
+    answers.bills = { ok: true, data: fresh };
+    navigator.onLine = false;
+    fireWindow('offline');
+
     // ── Carry and Start go straight to the server, online only (spec §4.3) ──
     navigator.onLine = true;
     fireWindow('online'); // its sync finds an empty queue: bootstrap, then the scope

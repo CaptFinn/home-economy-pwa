@@ -473,3 +473,21 @@ and the tab is widened if it was narrower. Nothing else in the sheet moves.
    still queues, and its deposit posts when you reconnect.
 10. Void a deposit by hand in the Ledger tab, then untick that share: no
     error, nothing else changes.
+
+# Stage 5, spec C2 runbook — Dashboard
+
+Deploys with the rest of stage 5. A new **Dashboard** tab beside Ledger and
+Bills; `sw.js` lists the new `app/dashboard.js` (cache `home-economy-v19`), so
+close and reopen the installed app once on each phone.
+
+## Verify
+
+1. Open Dashboard: this month's **Spent** equals the sum of this month's
+   withdrawals across the Ledger tab (spot-check one ledger by hand).
+2. A connected bill's tick raises **Set aside for bills**, not **Money in**.
+3. Mark that bill paid: **Spent** rises by the bill's amount.
+4. Void an entry in the Ledger tab and reopen the dashboard: the figures move.
+5. Pick last month from the picker: the figures and the trend's last bar
+   change; the picker lists only months that have entries.
+6. Airplane mode: leave the tab and come back; the last month viewed still
+   shows.

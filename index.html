@@ -43,10 +43,12 @@
     <div class="view-tabs" role="tablist">
       <button type="button" class="view-tab" id="tab-ledger" role="tab" aria-selected="true" aria-controls="screen">Ledger</button>
       <button type="button" class="view-tab" id="tab-bills" role="tab" aria-selected="false" aria-controls="bills">Bills</button>
+      <button type="button" class="view-tab" id="tab-dashboard" role="tab" aria-selected="false" aria-controls="dashboard">Dashboard</button>
     </div>
     <!-- The open tab's picker (stage 4 spec §2.2); renderTabs shows one. -->
     <select class="ledger-select" id="ledger-select" aria-label="Ledger"></select>
     <select class="ledger-select" id="bills-scope" aria-label="Cycle or payday" hidden></select>
+    <select class="ledger-select" id="dash-month" aria-label="Month" hidden></select>
   </div>
   <main id="screen" role="tabpanel">
     <!-- The two regions the Desktop layout places side by side (stage 4
@@ -58,6 +60,8 @@
   <!-- Filled by app/bills.js's renderBills; shown in place of #screen while
        the Bills tab is open. -->
   <section class="bills" id="bills" role="tabpanel" hidden></section>
+  <!-- Filled by app/dashboard.js's renderDashboard (stage 5 spec C2). -->
+  <section class="dashboard" id="dashboard" role="tabpanel" hidden></section>
   <footer id="foot"></footer>
 </div>
 

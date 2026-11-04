@@ -161,6 +161,7 @@ export function makeDom() {
     ['layout-mobile', 'account-menu'], ['layout-desktop', 'account-menu'],
     ['foot', null], ['ledger-select', null],
     ['tab-ledger', null], ['tab-bills', null], ['bills-scope', null], ['bills', null],
+    ['tab-dashboard', null], ['dash-month', null], ['dashboard', null],
   ];
   for (const [id, parent] of FIXED) {
     const el = make('div');
@@ -169,7 +170,7 @@ export function makeDom() {
     (parent ? byId.get(parent) : bodyEl).appendChild(el);
   }
   // As index.html ships them.
-  for (const id of ['account-menu', 'menu-signin']) byId.get(id).hidden = true;
+  for (const id of ['account-menu', 'menu-signin', 'dashboard', 'dash-month']) byId.get(id).hidden = true;
   return { document, make, byId };
 }
 
@@ -1521,6 +1522,115 @@ const { enqueue } = await import('./app/queue.js');
     assert.equal(find(billsEl, (e) => e.getAttribute('role') === 'img').getAttribute('aria-label'), '100% funded',
       'the ring never claims more than 100%');
 
+    navigator.onLine = false;
+    fireWindow('offline');
+  }
+
+  // ── the Dashboard tab (stage 5 spec C2 §3; Review Focus 3, 4) ─────────
+  {
+    const dashEl = document.getElementById('dashboard');
+    const monthSel = document.getElementById('dash-month');
+    const trend = ['2026-05', '2026-06', '2026-07', '2026-08', '2026-09', '2026-10'];
+    const dashView = (month, spent) => ({
+      month, months: ['2026-10', '2026-09'], trendMonths: trend,
+      totals: { spent, in: 5000, setAside: 750, net: 300 },
+      ledgers: [
+        { ledger: 'Home', spent: 4850, in: 5000, setAside: 750, net: 900, trend: [0, 0, 0, 0, 800, 4850],
+          accounts: [
+            { name: 'Groceries', balance: 7350, spent: 1850, in: 5000, setAside: 0, avg: 441.67,
+              top: [{ name: 'SM Supermarket', spent: 1500 }], trend: [0, 0, 0, 0, 800, 1850] },
+            { name: 'Electricity', balance: -2250, spent: 3000, in: 0, setAside: 750, avg: 500,
+              top: [{ name: 'Electricity', spent: 3000 }], trend: [0, 0, 0, 0, 0, 3000] },
+          ] },
+        { ledger: 'Fun', spent: 600, in: 0, setAside: 0, net: -600, trend: [0, 0, 0, 400, 0, 600],
+          accounts: [{ name: 'Games', balance: -1000, spent: 600, in: 0, setAside: 0, avg: 166.67,
+                      top: [{ name: 'Steam', spent: 600 }], trend: [0, 0, 0, 400, 0, 600] }] },
+      ],
+    });
+    const asked = [];
+    let answer = (args) => ({ ok: true, data: dashView(args.month || '2026-10', args.month === '2026-09' ? 800 : 5450) });
+    fetchImpl = async (url, req) => {
+      const body = JSON.parse(req.body);
+      asked.push(body);
+      const emptyCycle = { cycle: '2026-09', cycles: ['2026-09'], payers: ['Vin', 'Venice'], me: 'Vin', rows: [],
+                           totals: { billed: 0, funded: 0, remaining: 0, pending: 0 } };
+      const out = body.op === 'dashboard' ? answer(body.args)
+        : body.op === 'bootstrap' ? { ok: true, data: bootstrapView }
+        : body.op === 'bills' ? { ok: true, data: emptyCycle } : { ok: true, data: {} };
+      return { text: async () => JSON.stringify(out) };
+    };
+    const dashAsks = () => asked.filter((b) => b.op === 'dashboard').map((b) => b.args);
+
+    navigator.onLine = true;
+    fireWindow('online');
+    await settle();
+    asked.length = 0;
+    document.getElementById('tab-dashboard').dispatch('click');
+    await settle();
+    assert.deepEqual(dashAsks(), [{ month: '' }], 'opening the tab asks for the latest month');
+    assert.equal(dashEl.hidden, false, 'the Dashboard panel shows');
+    assert.equal(document.getElementById('screen').hidden, true, 'in place of the ledger');
+    assert.equal(document.getElementById('bills').hidden, true, 'and the bills');
+    assert.equal(monthSel.hidden, false, 'with its month picker in the tab row');
+    assert.equal(document.getElementById('bills-scope').hidden, true, 'where the cycle picker was');
+    assert.equal(document.getElementById('ledger-select').hidden, true, 'and the ledger picker');
+    assert.equal(document.getElementById('tab-dashboard').getAttribute('aria-selected'), 'true', 'the tab is selected');
+    const text = textOf(dashEl);
+    assert.ok(text.includes('₱5,450.00'), 'the all-ledger spending');
+    assert.ok(text.includes('₱5,000.00') && text.includes('₱750.00'), 'money in and the set-aside, separately');
+    assert.ok(text.includes('Home') && text.includes('Fun'), 'every ledger');
+    assert.ok(text.includes('Groceries') && text.includes('₱7,350.00'), 'every account with its balance');
+    assert.ok(text.includes('₱441.67'), "an account's monthly average");
+    assert.ok(text.includes('SM Supermarket'), 'and where the money went');
+    assert.ok(text.includes('Set aside'), 'the set-aside line is labelled');
+    assert.deepEqual(monthSel.children.map((o) => o.value), ['2026-10', '2026-09'], 'the picker lists the months');
+    assert.equal(monthSel.value, '2026-10', 'on the month shown');
+    assert.deepEqual(monthSel.children.map((o) => o.textContent), ['oct 2026', 'sep 2026'], 'named as a month, not a day');
+
+    // Choosing a month fetches it and shows it.
+    asked.length = 0;
+    monthSel.value = '2026-09';
+    monthSel.dispatch('change');
+    await settle();
+    assert.deepEqual(dashAsks(), [{ month: '2026-09' }], 'choosing a month asks for it');
+    assert.ok(textOf(dashEl).includes('₱800.00'), 'and shows it');
+
+    // Offline, the last month viewed still shows after leaving and returning.
+    navigator.onLine = false;
+    fireWindow('offline');
+    document.getElementById('tab-ledger').dispatch('click');
+    await settle();
+    asked.length = 0;
+    document.getElementById('tab-dashboard').dispatch('click');
+    await settle();
+    assert.ok(textOf(dashEl).includes('₱800.00'), 'offline, the cached month is still there');
+    assert.equal(asked.length, 0, 'and nothing is requested');
+
+    // A failed fetch keeps the cached view and says so.
+    navigator.onLine = true;
+    fireWindow('online');
+    await settle();
+    answer = () => ({ ok: false, kind: 'server', error: 'Could not load the dashboard.' });
+    monthSel.value = '2026-10';
+    monthSel.dispatch('change');
+    await settle();
+    assert.ok(textOf(dashEl).includes('Could not load the dashboard.'), "the failure is shown");
+    assert.ok(textOf(dashEl).includes('₱5,450.00'), 'beside the month cached from before');
+
+    // An empty ledger says so, and a sync with the tab open refreshes it.
+    answer = (args) => ({ ok: true, data: { month: '2026-11', months: [], trendMonths: trend,
+      totals: { spent: 0, in: 0, setAside: 0, net: 0 }, ledgers: [] } });
+    fireWindow('online');
+    await settle();
+    assert.ok(textOf(dashEl).includes('Nothing recorded yet.'), 'an empty book says so');
+
+    // Back to Bills restores its panel and picker.
+    document.getElementById('tab-bills').dispatch('click');
+    await settle();
+    assert.equal(dashEl.hidden, true, 'the dashboard steps aside');
+    assert.equal(document.getElementById('bills').hidden, false, 'for the bills');
+    assert.equal(monthSel.hidden, true, 'its month picker goes');
+    assert.equal(document.getElementById('bills-scope').hidden, false, 'and the cycle picker returns');
     navigator.onLine = false;
     fireWindow('offline');
   }

@@ -9,7 +9,7 @@ const CACHE = 'home-economy-v19'; // bump this string to retire the old cache on
 const SHELL = [
   'index.html', 'app.css', 'config.js', 'icon.svg', 'manifest.webmanifest',
   'app/fmt.js', 'app/db.js', 'app/queue.js', 'app/api.js', 'app/auth.js',
-  'app/ui.js', 'app/bills.js', 'app/main.js',
+  'app/ui.js', 'app/bills.js', 'app/dashboard.js', 'app/main.js',
 ];
 
 // Never `import()` config.js (or anything else) from in here (round-2

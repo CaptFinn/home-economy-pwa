@@ -822,3 +822,20 @@ body.desktop .rail { padding-left: 0; padding-right: 0; }
 .link-target, .paid-mark { color: var(--muted); }
 .paid-mark { color: var(--in); }
 .bill-link .bill-editor { padding: 0; flex: 1 1 100%; }
+
+/* The Dashboard tab (stage 5 spec C2). */
+.dashboard { display: grid; gap: 12px; padding-bottom: 24px; }
+.dash-summary, .dash-ledger { padding: 12px 14px; }
+.dash-line { display: flex; justify-content: space-between; align-items: baseline; padding: 3px 0; }
+.dash-line.grand { font-size: 17px; font-weight: 500; padding-bottom: 6px; }
+.dash-head, .dash-account-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.dash-ledger-name { font-size: 15px; font-weight: 500; }
+.dash-ledger .bar { margin: 6px 0; }
+.dash-detail { font-size: 12px; color: var(--muted); padding: 2px 0; }
+.dash-account { margin-top: 12px; padding-top: 10px; border-top: 0.5px solid var(--hairline); }
+.dash-account-name { font-size: 14px; }
+.trend { margin-top: 6px; }
+.trend-cols { display: flex; align-items: flex-end; gap: 4px; height: 28px; }
+.trend-cols i { flex: 1 1 0; min-height: 1px; background: var(--muted); opacity: 0.55; border-radius: 2px 2px 0 0; }
+.trend-cols i:last-child { opacity: 1; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

@@ -6,6 +6,7 @@ import { enqueue, drain } from './queue.js';
 import * as api from './api.js';
 import { currentAuth, signIn } from './auth.js';
 import { entryFrom, validateEntry, editFields, renderEntry, renderPending, renderRecent, renderLog, renderConn, renderLedgers, nextRetryDelay, storedLayout } from './ui.js';
+import { renderDashboard, dashboardKey } from './dashboard.js';
 import { renderBills, overlayQueued, billsKey, SWAP_PAYDAY, SWAP_CYCLE, nextCycle, onlyBillOps, lastCycleViews, anyLinked } from './bills.js';
 
 // memoryStore()'s shape, over the real IndexedDB functions — queue.js and
@@ -66,6 +67,10 @@ const bills = {
 // Which bills request is still wanted. A reply that lands after the person
 // has moved to another scope is for a view nobody is looking at any more.
 let billsSeq = 0;
+// The Dashboard tab (stage 5 spec C2). `month` is the one last chosen ('' asks
+// for the latest); `view` the server's answer for it, or its cached copy.
+const dash = { view: null, month: '', loading: false, error: '' };
+let dashSeq = 0;
 const conn = { online: navigator.onLine, syncing: false, at: null, error: '', unsent: false };
 
 // 'mobile' or 'desktop' (stage 4 spec §3), per device. applyLayout draws
@@ -134,7 +139,9 @@ function render() {
     account = null;
   }
 
-  if (tab === 'bills') {
+  if (tab === 'dashboard') {
+    renderDashboard({ dash, conn });
+  } else if (tab === 'bills') {
     renderBills({ bills, queue, conn, ledgers: view ? view.ledgers : [] });
   } else {
     // On Mobile the log takes the whole screen (stage 2 spec §3.2); on
@@ -171,12 +178,16 @@ function render() {
     the panels and the two tab-row pickers are fixed in index.html, like #conn. */
 function renderTabs() {
   const onBills = tab === 'bills';
-  document.getElementById('screen').hidden = onBills;
+  const onDash = tab === 'dashboard';
+  document.getElementById('screen').hidden = onBills || onDash;
   document.getElementById('bills').hidden = !onBills;
-  document.getElementById('tab-ledger').setAttribute('aria-selected', String(!onBills));
+  document.getElementById('dashboard').hidden = !onDash;
+  document.getElementById('tab-ledger').setAttribute('aria-selected', String(!onBills && !onDash));
   document.getElementById('tab-bills').setAttribute('aria-selected', String(onBills));
-  document.getElementById('ledger-select').hidden = onBills;
+  document.getElementById('tab-dashboard').setAttribute('aria-selected', String(onDash));
+  document.getElementById('ledger-select').hidden = onBills || onDash;
   document.getElementById('bills-scope').hidden = !onBills;
+  document.getElementById('dash-month').hidden = !onDash;
 }
 
 function hint(message) {
@@ -607,6 +618,11 @@ export async function sync() {
     // pending marks clear against the server's own figures. A failure
     // leaves the cached view up and says so on the connection line, as a
     // failed bootstrap does, and does not move the clock.
+    if (tab === 'dashboard') {
+      const d = await fetchDashboard(auth.token);
+      if (!d.ok) dash.error = d.error || 'Could not load the dashboard.';
+    }
+
     if (tab === 'bills' && !shown) {
       const b = await fetchBills(auth.token);
       if (!b.ok) {
@@ -775,7 +791,56 @@ async function setTab(which) {
   leaveEditMode();
   await rememberBills();
   if (tab === 'bills') await loadBills();
+  else if (tab === 'dashboard') await loadDashboard();
   else render();
+}
+
+/** Asks the server for the month in `dash.month`. Returns the envelope. */
+async function fetchDashboard(token) {
+  const seq = ++dashSeq;
+  const res = await api.call('dashboard', { month: dash.month }, token);
+  if (seq !== dashSeq) return { ok: true }; // the person moved to another month
+  if (res.ok) {
+    dash.view = res.data;
+    dash.month = res.data.month;
+    dash.error = '';
+    await putView(dashboardKey(res.data.month), res.data);
+    await putView('dashboard:last', { month: res.data.month });
+  }
+  return res;
+}
+
+/** Opens the tab on `dash.month`: the cached copy at once, then the server's
+    when online (stage 5 spec C2 §3). Offline, the last month viewed shows. */
+async function loadDashboard() {
+  dashSeq += 1; // whatever was in flight was for a month being left
+  if (!dash.month) {
+    const last = await getView('dashboard:last');
+    if (last) dash.month = last.month;
+  }
+  dash.view = dash.month ? await getView(dashboardKey(dash.month)) : null;
+  dash.error = '';
+  dash.loading = navigator.onLine;
+  render();
+  if (!navigator.onLine) return;
+  try {
+    const auth = await currentAuth();
+    const res = auth && auth.token
+      ? await fetchDashboard(auth.token)
+      : { ok: false, kind: 'auth', error: 'Sign in again to see the dashboard.' };
+    if (!res.ok) {
+      if (res.kind === 'auth') conn.needsAuth = true;
+      dash.error = res.error || 'Could not load the dashboard.';
+    }
+  } finally {
+    dash.loading = false;
+    if (tab === 'dashboard') render();
+  }
+}
+
+async function onDashMonth(value) {
+  dash.month = value;
+  await loadDashboard();
 }
 
 /** The scope dropdown: a cycle or payday, or the swap to the other view,
@@ -1084,6 +1149,8 @@ export async function boot() {
   document.getElementById('ledger-select').addEventListener('change', (e) => switchLedger(e.target.value));
   document.getElementById('tab-ledger').addEventListener('click', () => setTab('ledger'));
   document.getElementById('tab-bills').addEventListener('click', () => setTab('bills'));
+  document.getElementById('tab-dashboard').addEventListener('click', () => setTab('dashboard'));
+  document.getElementById('dash-month').addEventListener('change', (e) => onDashMonth(e.target.value));
   document.getElementById('bills-scope').addEventListener('change', (e) => onScope(e.target.value));
   document.getElementById('bills').addEventListener('change', onBillsChange);
   document.getElementById('bills').addEventListener('click', onBillsClick);
@@ -1098,8 +1165,8 @@ export async function boot() {
   // not cached — leaving it live is the same lie as a status line
   // claiming a sync that never happened), not whenever the next unrelated
   // render happens to run.
-  window.addEventListener('online', () => { conn.online = true; clearRetry(); renderConn(conn); renderLedgers({ view, conn }); if (log || tab === 'bills') render(); sync(); });
-  window.addEventListener('offline', () => { conn.online = false; clearRetry(); renderConn(conn); renderLedgers({ view, conn }); if (log || tab === 'bills') render(); });
+  window.addEventListener('online', () => { conn.online = true; clearRetry(); renderConn(conn); renderLedgers({ view, conn }); if (log || tab !== 'ledger') render(); sync(); });
+  window.addEventListener('offline', () => { conn.online = false; clearRetry(); renderConn(conn); renderLedgers({ view, conn }); if (log || tab !== 'ledger') render(); });
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && navigator.onLine) sync();
   });
@@ -1108,9 +1175,16 @@ export async function boot() {
   // cached copy here: the sync just below refetches the open scope.
   const last = await getView('bills:last');
   if (last) {
-    tab = last.tab === 'bills' ? 'bills' : 'ledger';
+    tab = last.tab === 'bills' || last.tab === 'dashboard' ? last.tab : 'ledger';
     bills.mode = last.mode === 'payday' ? 'payday' : 'cycle';
     bills.scopes = { cycle: '', payday: '', ...last.scopes };
+  }
+  if (tab === 'dashboard') {
+    const lastDash = await getView('dashboard:last');
+    if (lastDash) {
+      dash.month = lastDash.month;
+      dash.view = await getView(dashboardKey(lastDash.month));
+    }
   }
   const lastScope = bills.scopes[bills.mode];
   if (tab === 'bills' && lastScope) showBills(await getView(billsKey(bills.mode, lastScope)));

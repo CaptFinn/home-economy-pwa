@@ -170,10 +170,17 @@ Still in the Apps Script editor:
 Back in the terminal:
 ```bash
 cd /home/captfinn/Documents/Claude/Claude_Code_Projects/home-economy-pwa-client
-curl -sL -X POST -H 'Content-Type: text/plain' -d '{}' "$(node -e "import('./config.js').then(m => console.log(m.API_URL))")"
+curl -sL -H 'Content-Type: text/plain' -d '{}' "$(node -e "import('./config.js').then(m => console.log(m.API_URL))")"
 ```
 **Expected, exactly:**
 `{"ok":false,"error":"Sign in again to continue.","kind":"auth"}`
+
+> Do **not** add `-X POST` to this command. Google answers a POST with a
+> redirect, and `-X POST` makes curl send a second POST to the redirect address,
+> which refuses it and shows a long "Page Not Found" web page (in your Google
+> account's language). That page is a quirk of the test command, not a problem
+> with the server. `-d` already makes it a POST, and curl switches to GET for
+> the redirect, as the app does.
 
 - That is **success**: the server is up and refusing a stranger.
 - **STOP IF** you see a web page, `401`, `Unauthorized`, or "Sorry, unable to

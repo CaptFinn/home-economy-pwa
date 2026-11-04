@@ -395,7 +395,7 @@ sign-in after both are.
 4. Confirm it answers as the API, not as the household app:
 
    ```bash
-   curl -sL -X POST -H 'Content-Type: text/plain' -d '{}' "$(node -e "import('./config.js').then(m => console.log(m.API_URL))")"
+   curl -sL -H 'Content-Type: text/plain' -d '{}' "$(node -e "import('./config.js').then(m => console.log(m.API_URL))")"
    ```
 
    Expected: `{"ok":false,"error":"Sign in again to continue.","kind":"auth"}`.

@@ -444,3 +444,32 @@ Nothing new to configure.
    then, from a second phone still showing the old view, tick that payday: it
    is refused with "That payday does not fund this bill." and parks with
    Discard, and nothing else is affected.
+
+# Stage 5, spec C1 runbook — connect a bill to a ledger
+
+Deploys with the rest of stage 5. **A one-time sheet change you will see:**
+the first time a bill is connected (or a cycle is started), the Bill Tracker
+tab gains three header cells, `Ledger`, `Account` and `Paid` (columns I–K),
+and the tab is widened if it was narrower. Nothing else in the sheet moves.
+
+## Verify
+
+1. Connect Electricity to ledger `Home`, account `Electricity` (a new
+   account). The Bill Tracker gets the three headers; Home has no Electricity
+   account yet.
+2. Tick a share: Home gets an `Electricity` account holding a deposit of that
+   share (category *Bill set-aside*). Tick the other share from the other
+   phone: a second deposit.
+3. Untick it: that deposit is voided in the Ledger tab and the balance drops.
+4. Edit the amount to the real bill, tick the rest, then **Mark paid**: a
+   withdrawal of the full amount (category *Bill payment*); the account
+   balance is what is left over.
+5. **Undo** on the paid bill: the withdrawal is voided.
+6. Disconnect, then tick: nothing posts, and the earlier entries remain.
+7. Reconnect to the same account: the ticks already made do not double-post.
+8. Carry the bill to the next cycle: the connection comes with it; the paid
+   mark does not.
+9. Airplane mode: Connect, Disconnect, Mark paid and Undo are disabled; a tick
+   still queues, and its deposit posts when you reconnect.
+10. Void a deposit by hand in the Ledger tab, then untick that share: no
+    error, nothing else changes.

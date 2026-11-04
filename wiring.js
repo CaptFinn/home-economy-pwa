@@ -1245,6 +1245,111 @@ const { enqueue } = await import('./app/queue.js');
     navigator.onLine = false;
     fireWindow('offline');
 
+    // ── edit a bill in place (stage 5 spec B §2; Review Focus 2, 3, 5) ────
+    navigator.onLine = true;
+    fireWindow('online');
+    await settle();
+    const tapEdit = (cls, row) => find(billsEl, (e) => e.dataset.editRow === String(row) && String(e.className).includes(cls));
+    const editorField = (id) => billsEl.querySelector('#' + id);
+    const typeInto = (id, value) => {
+      const f = editorField(id);
+      f.value = value;
+      billsEl.dispatch('input', { target: f });
+    };
+
+    // Tapping the amount opens the editor with the current values.
+    assert.equal(editorField('edit-amount'), null, 'precondition: no editor open');
+    billsEl.dispatch('click', { target: tapEdit('bill-amount', 5) });
+    assert.equal(editorField('edit-amount').value, '7500', 'the amount field holds the current amount');
+    assert.equal(editorField('edit-due').value, '2026-10-01', 'and the date field the current due date');
+    assert.equal(editorField('bill-save').disabled, false, 'Save is live online');
+
+    // What is typed survives a repaint (a sync finishing).
+    typeInto('edit-amount', '8123.45');
+    typeInto('edit-due', '2026-10-05');
+    fireWindow('online');
+    await settle();
+    assert.equal(editorField('edit-amount').value, '8123.45', 'the typed amount survives a repaint');
+    assert.equal(editorField('edit-due').value, '2026-10-05', 'and so does the date');
+
+    // Bad input is refused before any request.
+    sent.length = 0;
+    typeInto('edit-amount', '0');
+    billsEl.dispatch('click', { target: editorField('bill-save') });
+    await settle();
+    assert.ok(textOf(billsEl).includes('Enter an amount greater than zero.'), 'zero is refused on the hint line');
+    typeInto('edit-amount', '');
+    billsEl.dispatch('click', { target: editorField('bill-save') });
+    await settle();
+    assert.ok(textOf(billsEl).includes('Enter an amount greater than zero.'), 'blank is refused too');
+    typeInto('edit-amount', '8123.45');
+    typeInto('edit-due', '');
+    billsEl.dispatch('click', { target: editorField('bill-save') });
+    await settle();
+    assert.ok(textOf(billsEl).includes('Pick a valid due date.'), 'a missing date is refused');
+    assert.equal(sent.filter((b) => b.op === 'editBill').length, 0, 'none of them reached the server');
+    assert.ok(editorField('edit-amount'), 'and the editor stays open');
+
+    // A refusal from the server keeps the editor open with the draft.
+    typeInto('edit-due', '2026-10-05');
+    answers.editBill = { ok: false, kind: 'conflict', error: 'That bill could not be found. Reload and try again.' };
+    billsEl.dispatch('click', { target: editorField('bill-save') });
+    await settle();
+    assert.ok(textOf(billsEl).includes('That bill could not be found'), "the server's message shows");
+    assert.equal(editorField('edit-amount').value, '8123.45', 'the draft is still there');
+
+    // A good save sends the full handle, shows the reply, caches it, closes the editor.
+    const edited = structuredClone(fresh);
+    edited.rows[0].amount = 8123.45;
+    edited.rows[0].due_date = '2026-10-05';
+    answers.editBill = { ok: true, data: edited };
+    billsEl.dispatch('click', { target: editorField('bill-save') });
+    await settle();
+    assert.deepEqual(sent.filter((b) => b.op === 'editBill').pop().args,
+      { cycle: '2026-09', row: 5, name: 'Rent', amount: 8123.45, due_date: '2026-10-05' },
+      'the edit names the cycle, row, bill, amount and date');
+    assert.equal(editorField('edit-amount'), null, 'the editor closes on success');
+    assert.ok(textOf(billsEl).includes('₱8,123.45') && textOf(billsEl).includes('due oct 5'), "the reply's values are on screen");
+    assert.equal((await db.getView('bills:cycle:2026-09')).rows[0].amount, 8123.45, 'and cached');
+    assert.equal((await db.listQueue()).length, 0, 'an edit never touches the queue');
+
+    // Cancel closes without sending.
+    sent.length = 0;
+    billsEl.dispatch('click', { target: tapEdit('bill-due', 5) });
+    assert.ok(editorField('edit-amount'), 'tapping the due date opens the same editor');
+    billsEl.dispatch('click', { target: editorField('bill-cancel') });
+    assert.equal(editorField('edit-amount'), null, 'Cancel closes it');
+    assert.equal(sent.length, 0, 'and sends nothing');
+
+    // Offline: the tap targets are disabled, with the hint saying why.
+    navigator.onLine = false;
+    fireWindow('offline');
+    assert.equal(tapEdit('bill-amount', 5).disabled, true, 'offline, the amount cannot be tapped');
+    assert.equal(tapEdit('bill-due', 5).disabled, true, 'nor the date');
+    assert.ok(textOf(billsEl).includes('editing one'), 'and the hint names editing');
+
+    // A carried bill with a blank amount and date offers to set them.
+    const blank = structuredClone(fresh);
+    blank.rows.push({ row: 8, name: 'Electricity', amount: '', due_date: '', cutoffs: 2, method: 'digital',
+      notes: '', carried: false, pending: true, installment: 0, progress: 0, remaining: 0, status: 'Pending',
+      schedule: [] });
+    blank.totals = { ...blank.totals, pending: 1 };
+    answers.bills = { ok: true, data: blank };
+    navigator.onLine = true;
+    fireWindow('online');
+    await settle();
+    assert.equal(tapEdit('bill-amount', 8).textContent, 'Set amount', 'a blank bill says what is missing');
+    assert.equal(tapEdit('bill-due', 8).textContent, '· set due date', 'both of them');
+    assert.ok(textOf(billsEl).includes('tap the bill to add them'), 'and the banner points at the card');
+    assert.ok(!textOf(billsEl).includes('Bill Tracker tab'), 'no longer at the sheet');
+    billsEl.dispatch('click', { target: tapEdit('bill-amount', 8) });
+    assert.equal(editorField('edit-amount').value, '', 'its editor starts empty');
+    assert.equal(editorField('edit-due').value, '', 'for both fields');
+    billsEl.dispatch('click', { target: editorField('bill-cancel') });
+    answers.bills = { ok: true, data: fresh };
+    navigator.onLine = false;
+    fireWindow('offline');
+
     // ── Carry and Start go straight to the server, online only (spec §4.3) ──
     navigator.onLine = true;
     fireWindow('online'); // its sync finds an empty queue: bootstrap, then the scope

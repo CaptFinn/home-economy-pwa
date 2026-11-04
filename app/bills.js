@@ -261,17 +261,60 @@ function noteLine(view, r, ctx) {
   return line;
 }
 
+/** The amount and the due date are tap targets that open the editor (stage 5
+    spec B §2.2). Online only, like Carry: disabled when the card cannot act. */
+function editButton(className, text, r, ctx) {
+  const b = button('linkish bill-edit ' + className, text);
+  b.dataset.editRow = String(r.row);
+  b.disabled = !ctx.canAct;
+  return b;
+}
+
+/** The inline editor, between a card's head and its schedule: an amount, a due
+    date (the native pickers), Save and Cancel. The values come from the draft
+    main.js keeps across repaints. */
+function billEditor(ctx) {
+  const box = el('div', 'bill-editor');
+  const field = (label, id, type, value) => {
+    const wrap = el('label', 'bill-field');
+    wrap.appendChild(el('span', null, label));
+    const input = el('input', 'bill-input');
+    input.id = id;
+    input.type = type;
+    input.value = value;
+    wrap.appendChild(input);
+    box.appendChild(wrap);
+    return input;
+  };
+  const amount = field('Amount', 'edit-amount', 'number', ctx.billDraft.amount);
+  amount.setAttribute('inputmode', 'decimal');
+  amount.setAttribute('step', '0.01');
+  amount.setAttribute('min', '0');
+  field('Due date', 'edit-due', 'date', ctx.billDraft.due);
+  const save = button('linkish', 'Save');
+  save.id = 'bill-save';
+  save.disabled = !ctx.canAct;
+  box.appendChild(save);
+  const cancel = button('linkish', 'Cancel');
+  cancel.id = 'bill-cancel';
+  box.appendChild(cancel);
+  return box;
+}
+
 /** One card per bill (spec §2.1): head, schedule, progress, note. */
 function billCard(view, r, ctx) {
   const card = el('div', 'bill-card panel');
   const head = el('div', 'bill-head');
-  head.appendChild(el('span', 'bill-name', r.name + (r.due_date ? ' · due ' + day(r.due_date) : '')));
+  const name = el('span', 'bill-name', r.name);
+  name.appendChild(editButton('bill-due', r.due_date ? '· due ' + day(r.due_date) : '· set due date', r, ctx));
+  head.appendChild(name);
   head.appendChild(methodTag(r.method));
-  head.appendChild(el('span', 'fig', r.pending ? '—' : peso(r.amount)));
+  head.appendChild(editButton('fig bill-amount', Number(r.amount) > 0 ? peso(r.amount) : 'Set amount', r, ctx));
   const status = el('span', 'bill-status', r.status);
   status.dataset.s = r.status; // app.css colours Overdue and Fully funded
   head.appendChild(status);
   card.appendChild(head);
+  if (ctx.editingBill === r.row) card.appendChild(billEditor(ctx));
 
   r.schedule.forEach((s) => {
     const line = el('div', 'sched');
@@ -361,7 +404,7 @@ function parkedRow(item) {
   return row;
 }
 
-const OFFLINE_HINT = "You're offline — ticks and notes sync when you reconnect; carrying a bill and starting a cycle need a connection.";
+const OFFLINE_HINT = "You're offline — ticks and notes sync when you reconnect; carrying a bill, editing one and starting a cycle need a connection.";
 const SIGNED_OUT_HINT = 'Sign in again to carry a bill or start a cycle.';
 
 /**
@@ -413,7 +456,7 @@ export function renderBills(state) {
   const missing = view && !isPayday && view.totals ? view.totals.pending : 0;
   if (missing) {
     host.appendChild(el('p', 'banner', missing + (missing === 1 ? ' bill needs' : ' bills need')
-      + ' an amount or due date — add them in the Bill Tracker tab.'));
+      + ' an amount or due date — tap the bill to add them.'));
   }
 
   // The list, and beside it on Desktop the figures and actions that stay
@@ -435,7 +478,8 @@ export function renderBills(state) {
     rowsEl.appendChild(lines);
     side.appendChild(totals(view.totals, true));
   } else {
-    const ctx = { canAct, editingNote: b.editingNote, noteDraft: b.noteDraft, stuck };
+    const ctx = { canAct, editingNote: b.editingNote, noteDraft: b.noteDraft, stuck,
+                  editingBill: b.editingBill, billDraft: b.billDraft };
     view.rows.forEach((r) => rowsEl.appendChild(billCard(view, r, ctx)));
     if (view.cutoffTotals && view.cutoffTotals.length) side.appendChild(cutoffPanel(view.cutoffTotals));
     side.appendChild(totals(view.totals, false));
@@ -456,7 +500,8 @@ export function renderBills(state) {
     hint.textContent = b.error;
     hint.setAttribute('data-state', 'error');
   } else if (b.busy) {
-    hint.textContent = b.busy === 'carry' ? 'Carrying…' : 'Starting ' + nextCycle(view && view.cycle) + '…';
+    hint.textContent = b.busy === 'carry' ? 'Carrying…' : b.busy === 'edit' ? 'Saving…'
+      : 'Starting ' + nextCycle(view && view.cycle) + '…';
   } else if (!state.conn.online) {
     hint.textContent = OFFLINE_HINT;
   } else if (state.conn.needsAuth) {

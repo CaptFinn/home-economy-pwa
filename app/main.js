@@ -51,11 +51,14 @@ let draft = null;
 // last refusal or failed load, shown on the bills hint line; `busy` the
 // online-only action in flight ('carry' or 'new'); `editingNote` the row
 // whose note editor is open, and `noteDraft` what is typed there, kept
-// across repaints as `draft` is for the entry form.
+// across repaints as `draft` is for the entry form. `editingBill` is the row
+// whose amount / due-date editor is open, `billDraft` its typed values, kept
+// the same way (stage 5 spec B).
 let tab = 'ledger';
 const bills = {
   mode: 'cycle', scopes: { cycle: '', payday: '' }, options: { cycle: [], payday: [] },
   view: null, loading: false, error: '', busy: '', editingNote: null, noteDraft: '',
+  editingBill: null, billDraft: { amount: '', due: '' },
 };
 // Which bills request is still wanted. A reply that lands after the person
 // has moved to another scope is for a view nobody is looking at any more.
@@ -736,6 +739,7 @@ async function loadBills() {
   showBills(scope ? await getView(billsKey(bills.mode, scope)) : null);
   bills.error = '';
   bills.editingNote = null;
+  bills.editingBill = null;
   bills.loading = navigator.onLine;
   render();
   if (!navigator.onLine) return;
@@ -805,6 +809,7 @@ function openNote(row) {
   const r = shown && shown.rows.find((x) => x.row === row);
   if (!r) return;
   bills.editingNote = row;
+  bills.editingBill = null;
   bills.noteDraft = r.notes || ''; // the newest queued text, when there is one
   render();
 }
@@ -835,17 +840,19 @@ async function saveNote() {
     still cached for next time, but never shown, and a refusal for a scope
     nobody is looking at must not land on the one they are. */
 async function billsAction(kind, op, args, fallback) {
-  if (bills.busy || !navigator.onLine || conn.needsAuth) return;
+  if (bills.busy || !navigator.onLine || conn.needsAuth) return false;
   const seq = ++billsSeq;
   bills.busy = kind;
   bills.error = '';
   render();
+  let ok = false; // did the server answer `ok` (stage 5 spec B: saveBill closes its editor on it)
   try {
     const auth = await currentAuth();
     const res = auth && auth.token
       ? await api.call(op, args, auth.token)
       : { ok: false, kind: 'auth', error: 'Sign in again to continue.' };
     if (res.ok) {
+      ok = true;
       if (seq === billsSeq) {
         bills.mode = 'cycle';
         await keepBills(res.data);
@@ -860,6 +867,34 @@ async function billsAction(kind, op, args, fallback) {
     bills.busy = '';
     render();
   }
+  return ok;
+}
+
+/** A tap on a bill's amount or due date: open its editor with the values
+    now on screen (blank for a bill that lacks them). One editor at a time. */
+function openBillEdit(row) {
+  const r = bills.view && bills.view.rows.find((x) => x.row === row);
+  if (!r) return;
+  bills.editingNote = null;
+  bills.editingBill = row;
+  bills.billDraft = { amount: Number(r.amount) > 0 ? String(r.amount) : '', due: r.due_date || '' };
+  bills.error = '';
+  render();
+}
+
+/** Save: the server's own rules (validateBillEdit_) checked first as a
+    courtesy, so an obvious slip costs no round trip; then straight to the
+    server like Carry. The editor closes only when the server accepted it. */
+async function saveBill() {
+  const r = bills.view && bills.view.rows.find((x) => x.row === bills.editingBill);
+  if (!r) return;
+  const amount = Number(bills.billDraft.amount);
+  if (!(amount > 0)) { bills.error = 'Enter an amount greater than zero.'; render(); return; }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(bills.billDraft.due)) { bills.error = 'Pick a valid due date.'; render(); return; }
+  const ok = await billsAction('edit', 'editBill',
+    { cycle: bills.view.cycle, row: r.row, name: r.name, amount, due_date: bills.billDraft.due },
+    'Could not save that bill.');
+  if (ok) { bills.editingBill = null; render(); }
 }
 
 function onCarry(row) {
@@ -877,6 +912,10 @@ function onBillsClick(event) {
   if (discard) { removeItem(discard.dataset.removeId); return; }
   const note = t.closest('[data-note-row]');
   if (note) { openNote(Number(note.dataset.noteRow)); return; }
+  const edit = t.closest('[data-edit-row]');
+  if (edit) { openBillEdit(Number(edit.dataset.editRow)); return; }
+  if (t.closest('#bill-cancel')) { bills.editingBill = null; bills.error = ''; render(); return; }
+  if (t.closest('#bill-save')) { saveBill(); return; }
   if (t.closest('#note-cancel')) { bills.editingNote = null; render(); return; }
   if (t.closest('#note-save')) { saveNote(); return; }
   const carry = t.closest('[data-carry-row]');
@@ -958,6 +997,8 @@ export async function boot() {
   document.getElementById('bills').addEventListener('click', onBillsClick);
   document.getElementById('bills').addEventListener('input', (e) => {
     if (e.target.id === 'note-input') bills.noteDraft = e.target.value;
+    if (e.target.id === 'edit-amount') bills.billDraft.amount = e.target.value;
+    if (e.target.id === 'edit-due') bills.billDraft.due = e.target.value;
   });
   // renderLedgers alongside renderConn, not a full render(): going offline
   // must disable the switcher on the spot (the other books' accounts are

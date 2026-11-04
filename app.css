@@ -785,3 +785,26 @@ body.desktop .rail { padding-left: 0; padding-right: 0; }
 .cutoff-day { color: var(--muted); }
 .cutoff-all { text-align: right; font-weight: 500; }
 .cutoff-detail { grid-column: 1 / -1; font-size: 12px; color: var(--muted); }
+
+/* The amount and due date open the editor (stage 5 spec B §2.2). */
+.bill-edit { margin-left: 4px; text-align: inherit; }
+.bill-edit.fig { margin-left: 0; }
+.bill-edit:disabled { cursor: default; text-decoration: none; color: inherit; }
+.bill-editor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px 14px;
+  padding: 8px 14px 10px;
+  background: var(--surface);
+}
+.bill-field { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--muted); }
+/* 16px, as .note-input: iOS zooms the page on focus below it. */
+.bill-input {
+  padding: 8px 10px;
+  font: 400 16px var(--sans);
+  color: var(--ink);
+  background: var(--well);
+  border: none;
+  border-radius: var(--radius-sm);
+}

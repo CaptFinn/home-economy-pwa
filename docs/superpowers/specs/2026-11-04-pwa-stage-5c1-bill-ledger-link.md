@@ -76,18 +76,26 @@ the suggestion list, without switching the person's active ledger.
 ### 3.1 Identity
 
 Each posted entry carries a stable, readable Id:
-`bill|<cycle>|<name>|<ledger>|<kind>|<n>`, with `|` inside a part replaced by
-`/`, where `<kind>` is `<payday>|<payer, lower-case>` for a tick or `paid`,
-and `<n>` counts every entry (voided or not) already carrying that key plus
-one. Consequences:
+`bill|<cycle>|<name>[#k]|<ledger>|<account>|<kind>|<n>`, with `|` inside a
+part replaced by `/`, where `<kind>` is `<payday>|<payer, lower-case>` for a
+tick or `paid`, `#k` marks the k-th bill of that name in the cycle (by sheet
+row; the first has none, since duplicate names are legal for per-cutoff
+items), and `<n>` is one past the highest suffix already under that key
+(voided entries included). Consequences:
 - A retried call finds a **live** entry with the key and posts nothing: no
   duplicate on a lost reply or a queue retry.
 - Two simultaneous calls compute the same `<n>`; the ledger's existing
   `idExists_` check, inside its lock, lets one through.
-- A voided entry keeps its Id (so re-ticking after an untick gets `n+1`
-  rather than being blocked by the voided row).
-- Key includes the ledger, so reconnecting to another ledger posts afresh
-  there while the old ledger keeps its history.
+- A voided entry keeps its Id, so re-ticking after an untick gets the next
+  number rather than being blocked by the voided row; numbering by the
+  highest suffix (not a count) also survives a row deleted by hand.
+- The key includes the ledger **and the account**, so reconnecting to another
+  ledger or to a corrected account name posts afresh there while the old
+  place keeps its history (and its deposits stay live there: fix them by
+  hand in the Ledger tab).
+- Mark paid posts the withdrawal **first** and stamps `Paid` second, so a
+  failure in between leaves a withdrawal and no mark (pressing Mark paid
+  again completes it) rather than a mark with nothing in the ledger.
 
 ### 3.2 Entry content
 

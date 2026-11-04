@@ -452,6 +452,16 @@ the first time a bill is connected (or a cycle is started), the Bill Tracker
 tab gains three header cells, `Ledger`, `Account` and `Paid` (columns I–K),
 and the tab is widened if it was narrower. Nothing else in the sheet moves.
 
+**Before the first connect, check that `I1:K1` and the cells below them in
+Bill Tracker are empty** (nothing hand-made in columns I–K): the app reads
+those columns as Ledger, Account and Paid without checking, so stray content
+there would be taken for a connection.
+
+**Known limit:** if you move a bill's due date so that a payday drops out of
+its schedule, a deposit already posted for that payday stays live in the
+ledger (the tick stops counting, and the app cannot untick it). Void that
+deposit by hand in the Ledger tab.
+
 ## Verify
 
 1. Connect Electricity to ledger `Home`, account `Electricity` (a new

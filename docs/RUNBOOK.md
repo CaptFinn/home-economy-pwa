@@ -422,3 +422,25 @@ sign-in after both are.
    for the hour, as it does today.
 8. The Ledger tab: a new entry still shows in the pending list until it
    syncs, and the balance still says `includes pending`.
+
+# Stage 5, spec B runbook — edit a bill, cut-off totals
+
+Deploys with the rest of stage 5 (same server version, same client push).
+Nothing new to configure.
+
+## Verify
+
+1. Change the electricity bill's amount: the card, the progress line, the
+   ring and the totals all move. In the sheet, the Amount cell holds the new
+   number and nothing else in that row changed.
+2. Change a due date by a month: the schedule's paydays change. Move it back
+   and the earlier ticks count again.
+3. Carry a cycle forward, then set the amount and due date on a carried bill
+   from the phone: it stops being pending and the banner count drops.
+4. Airplane mode: the amount and date cannot be tapped, and the hint says why.
+5. The Cut-offs panel's *Both of you* for a payday equals the payday view's
+   figure for the same day.
+6. Change a due date on one phone so a payday drops out of the schedule,
+   then, from a second phone still showing the old view, tick that payday: it
+   is refused with "That payday does not fund this bill." and parks with
+   Discard, and nothing else is affected.

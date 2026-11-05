@@ -43,7 +43,7 @@ curl -sL -H 'Content-Type: text/plain' -d '{}' "$(node -e "import('./config.js')
 ```
 Expected exactly `{"ok":false,"error":"Sign in again to continue.","kind":"auth"}`, then:
 ```bash
-cd ../Home_Economy_PWA/home-economy-app && clasp list-deployments | grep AKfycbxWIK3OPj
+cd /home/captfinn/Documents/Claude/Claude_Code_Projects/Home_Economy_PWA/home-economy-app && clasp list-deployments | grep AKfycbxWIK3OPj
 ```
 Expected a line ending `@14`.
 

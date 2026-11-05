@@ -292,6 +292,57 @@ const { enqueue } = await import('./app/queue.js');
     'and none of the previous render survives — textContent really clears children, not just its own text');
 }
 
+// ── the ledger glance: this month's spending and the ledger total ─────
+{
+  const glanceView = {
+    user: 'vin', ledger: 'Home', ledgers: ['Home', 'Fun'],
+    monthSpent: { month: '2026-11', spent: 12480 },
+    accounts: [
+      { name: 'Vin', balance: 1500, txns: [] },
+      { name: 'Venice', balance: 2500.5, txns: [] },
+    ],
+  };
+  const homeText = () => textOf(document.getElementById('ledger-main'));
+  ui.renderEntry({ view: glanceView, queue: [], conn: { online: true } });
+  let t = homeText();
+  assert.ok(t.includes('Spent in nov'), 'the card names the month');
+  assert.ok(t.includes('₱12,480.00'), "and shows the server's figure for it");
+  assert.ok(t.includes('Ledger total') && t.includes('₱4,000.50'), 'the ledger total is the sum of every account');
+  assert.ok(!t.includes('includes pending'), 'nothing pending, nothing claimed');
+
+  // Unsent entries move both figures, and say so; only this ledger's, only this month's withdrawals.
+  const q = (over) => ({ id: 'q' + Math.random(), op: 'addEntry', state: 'pending', args: { entry: {
+    ledger: 'Home', date: '2026-11-20', account: 'Vin', amount: 100, direction: 'out', ...over } } });
+  ui.renderEntry({ view: glanceView, conn: { online: true }, queue: [
+    q({}),                                   // counts: +100 spent, -100 total
+    q({ amount: 50, direction: 'in' }),      // money in: total +50, not spending
+    q({ date: '2026-10-31' }),               // last month: total only
+    q({ ledger: 'Fun', amount: 999 }),       // another book: neither
+  ] });
+  t = homeText();
+  assert.ok(t.includes('₱12,580.00'), 'a queued withdrawal this month is added to what was spent');
+  assert.ok(t.includes('₱3,850.50'), 'and the total follows every queued entry of this book (-100 +50 -100)');
+  assert.ok(t.includes('includes pending'), 'the figures say they include unsent entries');
+
+  // Pending on another account only: the balance note stays quiet, so the total says it itself;
+  // pending on the selected account: the balance note says it once, not twice.
+  ui.renderEntry({ view: glanceView, account: 'Vin', conn: { online: true },
+    queue: [q({ account: 'Venice', amount: 10 })] });
+  t = homeText();
+  assert.ok(t.includes('Ledger total ₱3,990.50 · incl. pending'), 'the total explains itself when the balance note does not');
+  ui.renderEntry({ view: glanceView, account: 'Vin', conn: { online: true }, queue: [q({})] });
+  assert.ok(!homeText().includes('incl. pending'), 'and the total adds nothing when the balance note already says it');
+
+  // No card for a view cached before the server sent the figure.
+  const { monthSpent, ...old } = glanceView;
+  ui.renderEntry({ view: old, queue: [], conn: { online: true } });
+  t = homeText();
+  assert.ok(!t.includes('Spent in'), 'no spending card without a figure');
+  assert.ok(t.includes('Ledger total'), 'the total still shows');
+  ui.renderEntry({ view: { ...glanceView, accounts: [] }, queue: [], conn: { online: true } });
+  assert.ok(!homeText().includes('Ledger total'), 'and a ledger with no accounts has neither');
+}
+
 // ── renderPending, including the insertBefore branch it only avoids
 // throwing on because renderEntry always seeds #pending-list first
 // (review finding 4) ────────────────────────────────────────────────────
@@ -866,7 +917,8 @@ const { enqueue } = await import('./app/queue.js');
     'precondition: this scenario starts with needsAuth still true from the earlier lost session');
   fetchImpl = fetchReturning({
     ok: true,
-    data: { ledger: 'Account 1', accounts: [{ name: 'Cash', balance: 50, txns: [] }] },
+    data: { ledger: 'Account 1', accounts: [{ name: 'Cash', balance: 50, txns: [] }],
+            monthSpent: { month: '2026-11', spent: 321 } },
   });
   ledgerSelect.value = 'Account 1';
   ledgerSelect.dispatch('change');
@@ -875,6 +927,8 @@ const { enqueue } = await import('./app/queue.js');
   const stored = await db.getView('bootstrap');
   assert.equal(stored.ledger, 'Account 1', 'the switch reached the views store, not just memory');
   assert.equal(stored.accounts[0].name, 'Cash', "with the new book's own accounts");
+  assert.equal(stored.monthSpent.spent, 321, "and the new book's own spending figure, not the old book's");
+  assert.ok(textOf(document.getElementById('ledger-main')).includes('₱321.00'), 'which the card shows');
   assert.notEqual(document.getElementById('conn').textContent, 'sign in again',
     'a real success clears a needsAuth left over from an earlier rejected switch');
 

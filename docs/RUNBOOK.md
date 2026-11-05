@@ -501,3 +501,24 @@ close and reopen the installed app once on each phone.
    change; the picker lists only months that have entries.
 6. Airplane mode: leave the tab and come back; the last month viewed still
    shows.
+
+# Ledger glance — this month's spending, and the ledger total
+
+`sw.js`'s `CACHE` is `home-economy-v20`. **Needs the server redeployed**
+(`monthSpent` is new in bootstrap and in the ledger switch): follow
+`docs/DEPLOY-LEDGER-GLANCE.md`.
+
+## Verify
+
+1. Ledger tab: under the big balance, a quiet `Ledger total ₱…` line, equal to
+   the sum of the account pills.
+2. Under it, a small card `Spent in <month> ₱…`. For the ledger you are
+   viewing, it equals the sum of this month's withdrawals in the sheet (money in
+   and voided rows are not counted).
+3. Add a withdrawal: the card and the total both move at once, with
+   "includes pending", and settle to the same figures after the sync.
+4. Add a deposit: the total moves, the card does not.
+5. Switch ledger: the card shows that ledger's own figure.
+6. A withdrawal dated last month moves the total but not the card.
+7. Moving money between two of your own accounts counts as spending (there is
+   no transfer type). That is expected today.

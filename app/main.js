@@ -703,7 +703,7 @@ export async function switchLedger(name) {
 
     // Only ledger and accounts change; `ledgers` (the roster) and `user`
     // carry over from the last bootstrap.
-    view = { ...view, ledger: res.data.ledger, accounts: res.data.accounts };
+    view = { ...view, ledger: res.data.ledger, accounts: res.data.accounts, monthSpent: res.data.monthSpent };
     log = null; // the account it was showing belongs to the other book
     leaveEditMode(); // and so does the row open in the form
     await putView('bootstrap', view); // survives a reload

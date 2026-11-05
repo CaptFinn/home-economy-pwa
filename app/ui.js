@@ -131,6 +131,17 @@ export function directedAmount(entry) {
     first makes `view.ledger` change under a queue that still holds another
     book's unsent entries — without this filter, an unsent Bills entry
     would leak into Account 1's balance the moment someone switches books. */
+/** What this book's unsent withdrawals add to the month's spending (the card
+    on the Ledger home). Only addEntry items, only this ledger's, only
+    withdrawals dated in `month` ('YYYY-MM', the server's own): everything else
+    is not spending, or is not this card's month. */
+export function pendingSpent(queue, ledger, month) {
+  return queue
+    .filter((i) => i.state === 'pending' && i.op === 'addEntry' && i.args.entry.ledger === ledger
+      && i.args.entry.direction === 'out' && String(i.args.entry.date || '').slice(0, 7) === month)
+    .reduce((sum, i) => sum + Number(i.args.entry.amount || 0), 0);
+}
+
 export function pendingBalance(queue, account, ledger) {
   const forLedger = queue.filter((item) => item.op !== 'addEntry' || item.args.entry.ledger === ledger);
   const signedQueue = forLedger.map((item) => (item.op !== 'addEntry' ? item : {
@@ -215,6 +226,17 @@ export function renderEntry(state) {
     label.className = 'hero-label';
     label.textContent = selected.name + ' · balance';
     hero.appendChild(label);
+    // The whole book at a glance, kept quiet: the sum of every account.
+    const total = view.accounts.reduce((sum, a) => sum + withPending(a), 0);
+    const totalNote = document.createElement('div');
+    totalNote.className = 'hero-total';
+    // The balance note below already says "includes pending" when the selected
+    // account has unsent entries; the total only adds its own when it is the
+    // one that differs from the server's figure.
+    const totalDiffers = total !== view.accounts.reduce((sum, a) => sum + a.balance, 0);
+    const balanceSaysIt = withPending(selected) !== selected.balance;
+    totalNote.textContent = 'Ledger total ' + peso(total) + (totalDiffers && !balanceSaysIt ? ' · incl. pending' : '');
+    hero.appendChild(totalNote);
     // Only when something is actually queued for this account (round-2
     // review, C5): otherwise the figure is the server's own.
     if (withPending(selected) !== selected.balance) {
@@ -224,6 +246,30 @@ export function renderEntry(state) {
       hero.appendChild(note);
     }
     main.appendChild(hero);
+
+    // This month's spending in this book, from the server, with unsent
+    // withdrawals added and said so. Absent for a view cached before the
+    // server sent it.
+    if (view.monthSpent) {
+      const unsent = pendingSpent(queue, view.ledger, view.monthSpent.month);
+      const card = document.createElement('div');
+      card.className = 'spent-card';
+      const cardLabel = document.createElement('span');
+      cardLabel.className = 'spent-label';
+      cardLabel.textContent = 'Spent in ' + day(view.monthSpent.month + '-01').split(' ')[0];
+      card.appendChild(cardLabel);
+      const cardFigure = document.createElement('span');
+      cardFigure.className = 'spent-figure fig';
+      cardFigure.textContent = peso(view.monthSpent.spent + unsent);
+      card.appendChild(cardFigure);
+      if (unsent) {
+        const cardNote = document.createElement('span');
+        cardNote.className = 'txn-balance';
+        cardNote.textContent = 'includes pending';
+        card.appendChild(cardNote);
+      }
+      main.appendChild(card);
+    }
 
     const rail = document.createElement('div');
     rail.className = 'rail';

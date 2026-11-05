@@ -839,3 +839,21 @@ body.desktop .rail { padding-left: 0; padding-right: 0; }
 .trend-cols i { flex: 1 1 0; min-height: 1px; background: var(--muted); opacity: 0.55; border-radius: 2px 2px 0 0; }
 .trend-cols i:last-child { opacity: 1; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* The Ledger home's glance: the book's total, kept quiet, and this month's
+   spending as a small card. */
+.hero-total { margin-top: 6px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.spent-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  margin: 0 var(--pad) 14px;
+  padding: 10px 14px;
+  background: var(--surface);
+  border-radius: var(--radius);
+}
+.spent-label { color: var(--muted); font-size: 12px; }
+.spent-figure { font-size: 17px; font-weight: 500; }
+.spent-card .txn-balance { flex-basis: 100%; }
+body.desktop .spent-card { margin-left: 0; margin-right: 0; }

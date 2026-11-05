@@ -237,6 +237,19 @@ export function renderEntry(state) {
     const balanceSaysIt = withPending(selected) !== selected.balance;
     totalNote.textContent = 'Ledger total ' + peso(total) + (totalDiffers && !balanceSaysIt ? ' · incl. pending' : '');
     hero.appendChild(totalNote);
+    // This month's spending in this book, from the server, in the same quiet
+    // style, with unsent withdrawals added. Absent for a view cached before
+    // the server sent it. Its pending note follows the total's rule: only when
+    // the balance note above has not already said it.
+    if (view.monthSpent) {
+      const unsent = pendingSpent(queue, view.ledger, view.monthSpent.month);
+      const month = day(view.monthSpent.month + '-01').split(' ')[0];
+      const spentNote = document.createElement('div');
+      spentNote.className = 'hero-total';
+      spentNote.textContent = 'Spent in ' + month.charAt(0).toUpperCase() + month.slice(1) + ': '
+        + peso(view.monthSpent.spent + unsent) + (unsent && !balanceSaysIt ? ' · incl. pending' : '');
+      hero.appendChild(spentNote);
+    }
     // Only when something is actually queued for this account (round-2
     // review, C5): otherwise the figure is the server's own.
     if (withPending(selected) !== selected.balance) {
@@ -246,30 +259,6 @@ export function renderEntry(state) {
       hero.appendChild(note);
     }
     main.appendChild(hero);
-
-    // This month's spending in this book, from the server, with unsent
-    // withdrawals added and said so. Absent for a view cached before the
-    // server sent it.
-    if (view.monthSpent) {
-      const unsent = pendingSpent(queue, view.ledger, view.monthSpent.month);
-      const card = document.createElement('div');
-      card.className = 'spent-card';
-      const cardLabel = document.createElement('span');
-      cardLabel.className = 'spent-label';
-      cardLabel.textContent = 'Spent in ' + day(view.monthSpent.month + '-01').split(' ')[0];
-      card.appendChild(cardLabel);
-      const cardFigure = document.createElement('span');
-      cardFigure.className = 'spent-figure fig';
-      cardFigure.textContent = peso(view.monthSpent.spent + unsent);
-      card.appendChild(cardFigure);
-      if (unsent) {
-        const cardNote = document.createElement('span');
-        cardNote.className = 'txn-balance';
-        cardNote.textContent = 'includes pending';
-        card.appendChild(cardNote);
-      }
-      main.appendChild(card);
-    }
 
     const rail = document.createElement('div');
     rail.className = 'rail';

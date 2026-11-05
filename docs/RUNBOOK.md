@@ -504,7 +504,7 @@ close and reopen the installed app once on each phone.
 
 # Ledger glance — this month's spending, and the ledger total
 
-`sw.js`'s `CACHE` is `home-economy-v20`. **Needs the server redeployed**
+`sw.js`'s `CACHE` is `home-economy-v20` (v21 after the plain-text change below). **Needs the server redeployed**
 (`monthSpent` is new in bootstrap and in the ledger switch): follow
 `docs/DEPLOY-LEDGER-GLANCE.md`.
 
@@ -512,13 +512,19 @@ close and reopen the installed app once on each phone.
 
 1. Ledger tab: under the big balance, a quiet `Ledger total ₱…` line, equal to
    the sum of the account pills.
-2. Under it, a small card `Spent in <month> ₱…`. For the ledger you are
-   viewing, it equals the sum of this month's withdrawals in the sheet (money in
-   and voided rows are not counted).
-3. Add a withdrawal: the card and the total both move at once, with
+2. Under it, a second quiet line `Spent in Nov: ₱…` (plain text, not a card).
+   For the ledger you are viewing, it equals the sum of this month's withdrawals
+   in the sheet (money in and voided rows are not counted).
+3. Add a withdrawal: the spending line and the total both move at once, with
    "includes pending", and settle to the same figures after the sync.
-4. Add a deposit: the total moves, the card does not.
-5. Switch ledger: the card shows that ledger's own figure.
-6. A withdrawal dated last month moves the total but not the card.
+4. Add a deposit: the total moves, the spending line does not.
+5. Switch ledger: the spending line shows that ledger's own figure.
+6. A withdrawal dated last month moves the total but not the spending line.
 7. Moving money between two of your own accounts counts as spending (there is
    no transfer type). That is expected today.
+
+## Ledger glance, plain-text revision (client only)
+
+The spending card became a plain line under the ledger total. **No server
+change, no redeploy**: follow `docs/DEPLOY-GLANCE-TEXT.md`. `sw.js`'s `CACHE`
+is `home-economy-v21`.

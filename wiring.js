@@ -305,8 +305,8 @@ const { enqueue } = await import('./app/queue.js');
   const homeText = () => textOf(document.getElementById('ledger-main'));
   ui.renderEntry({ view: glanceView, queue: [], conn: { online: true } });
   let t = homeText();
-  assert.ok(t.includes('Spent in nov'), 'the card names the month');
-  assert.ok(t.includes('₱12,480.00'), "and shows the server's figure for it");
+  assert.ok(t.includes('Spent in Nov: ₱12,480.00'), "a plain line names the month and shows the server's figure");
+  assert.equal(document.getElementById('ledger-main').querySelector('.spent-card'), null, 'and it is not a card');
   assert.ok(t.includes('Ledger total') && t.includes('₱4,000.50'), 'the ledger total is the sum of every account');
   assert.ok(!t.includes('includes pending'), 'nothing pending, nothing claimed');
 
@@ -320,7 +320,7 @@ const { enqueue } = await import('./app/queue.js');
     q({ ledger: 'Fun', amount: 999 }),       // another book: neither
   ] });
   t = homeText();
-  assert.ok(t.includes('₱12,580.00'), 'a queued withdrawal this month is added to what was spent');
+  assert.ok(t.includes('Spent in Nov: ₱12,580.00'), 'a queued withdrawal this month is added to what was spent');
   assert.ok(t.includes('₱3,850.50'), 'and the total follows every queued entry of this book (-100 +50 -100)');
   assert.ok(t.includes('includes pending'), 'the figures say they include unsent entries');
 
@@ -330,8 +330,9 @@ const { enqueue } = await import('./app/queue.js');
     queue: [q({ account: 'Venice', amount: 10 })] });
   t = homeText();
   assert.ok(t.includes('Ledger total ₱3,990.50 · incl. pending'), 'the total explains itself when the balance note does not');
+  assert.ok(t.includes('Spent in Nov: ₱12,490.00 · incl. pending'), 'and so does the spending line');
   ui.renderEntry({ view: glanceView, account: 'Vin', conn: { online: true }, queue: [q({})] });
-  assert.ok(!homeText().includes('incl. pending'), 'and the total adds nothing when the balance note already says it');
+  assert.ok(!homeText().includes('incl. pending'), 'and neither line adds anything when the balance note already says it');
 
   // No card for a view cached before the server sent the figure.
   const { monthSpent, ...old } = glanceView;
